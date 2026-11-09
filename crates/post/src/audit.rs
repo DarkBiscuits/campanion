@@ -6,6 +6,8 @@
 //!
 //! A word this checker does not know is an error, so a typo in a template fails here. Geometry
 //! is also checked against [`crate::read_back`] so the two readers stay aligned.
+//! `G53` is a machine-coordinate move, not a part point; it preserves part position, motion
+//! mode and plane, matching read-back.
 //!
 //! Lathe posts are rejected; lathe and mill-turn text is replayed by [`crate::audit_lathe`].
 //! Five-axis posts are replayed by [`crate::audit_five`]. Work offset
@@ -381,6 +383,9 @@ impl<'a> Parser<'a> {
     }
 
     fn interpret(&mut self, line_no: usize, words: &[Word]) -> Result<()> {
+        let previous_motion = self.motion;
+        let previous_plane = self.plane;
+        let mut machine_move = false;
         let mut saw_dwell = false;
         let mut want_length = false;
         let mut h_word: Option<u32> = None;
@@ -407,6 +412,7 @@ impl<'a> Parser<'a> {
                 'G' if self.is_probe_word(word) => probe_words += 1,
                 'G' => {
                     let code = g_or_m(line_no, word, 'G')?;
+                    machine_move |= code == 53;
                     self.apply_g(line_no, code, &mut saw_dwell, &mut want_length, &mut block_motion, &mut block_plane, &mut block_feed)?;
                 }
                 'M' if self.is_immediate_digital(word) => {
@@ -510,6 +516,14 @@ impl<'a> Parser<'a> {
             return Ok(());
         }
 
+        if machine_move {
+            // Validate the whole block first, but do not turn machine coordinates into a
+            // part-frame point or let its G0/G1 replace the part's modal motion.
+            self.motion = previous_motion;
+            self.plane = previous_plane;
+            return Ok(());
+        }
+
         let has_axis = x.is_some() || y.is_some() || z.is_some() || saw_rotary;
         if !has_axis {
             return Ok(());
@@ -600,7 +614,7 @@ impl<'a> Parser<'a> {
             19 => self.set_plane(line_no, Plane::Yz, block_plane)?,
             20 => return Err(fail(line_no, "inches are not supported")),
             21 => self.set_units(line_no, UnitMode::Millimetre)?,
-            40 | 64 | 80 => {}
+            40 | 53 | 64 | 80 => {}
             43 => *want_length = true,
             49 => {
                 if *want_length {

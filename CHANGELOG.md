@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Mill modal audit accepts `G53` machine-coordinate retracts without adding a part-frame motion or changing its position, motion mode or plane, matching read-back (#145).
+
 ## 0.10.0 — 2026-11-09
 
 Router gaps from the processes plan: cutter sense on diameter tools, onion-skin depth passes, a deterministic sheet packer with nesting checks, and a LinuxCNC router dialect with a cited probe cycle and vacuum/dust auxiliaries. This output has not been proven on a machine.
