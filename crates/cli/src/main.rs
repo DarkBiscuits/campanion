@@ -54,7 +54,7 @@ Usage:
   campanion lathe JOB -o OUT [--ir OUT.json] [--post ID|FILE.json] [--up-axis z|y|auto]
   campanion post IR.json --post ID|FILE.json [-o OUT]
   campanion posts
-  campanion verify FILE [--mesh PART.stl --tool ball:3|flat:3|bull:3,1]
+  campanion verify FILE [--mesh PART.stl [--tool ball:3|flat:3|bull:3,1]]
   campanion view IR.json
   campanion schema
   campanion --help
@@ -100,7 +100,7 @@ post    Post an IR JSON file. --post is an id or a file ending in .json, same as
         Read-back uses the default job chord tolerance, 0.01 mm. A mismatch exits 1.
 posts   List built-in post ids with their names and descriptions.
 verify  Verify an IR JSON file and print a report. The status is 1 when the report has errors.
-        --mesh and --tool also check cutting moves against an STL mesh. Both are required together.
+        --mesh checks cutting moves using IR tool shapes. --tool overrides all cutters and needs --mesh.
         The tool is a radius in millimetres: ball:3, flat:3 or bull:3,1 (bull corner after the comma).
         Tolerance is the job-file default chord tolerance, 0.01 mm. Samples are min(0.25, tolerance*10) mm apart.
         A gouge names the operation, the position and the depth. XY arcs are sampled; other arcs are rejected.
@@ -184,7 +184,7 @@ fn emit(args: &[OsString], ngc: bool) -> Result<ExitCode, CliError> {
 
 struct VerifyArgs {
     file: PathBuf,
-    mesh: Option<(PathBuf, String)>,
+    mesh: Option<(PathBuf, Option<String>)>,
 }
 
 fn verify(args: &[OsString]) -> Result<ExitCode, CliError> {
@@ -192,10 +192,16 @@ fn verify(args: &[OsString]) -> Result<ExitCode, CliError> {
     let text = job::read_text(&args.file)?;
     let doc = campanion_ir::Document::from_json(&text)?;
     let gouges = if let Some((mesh_path, tool)) = &args.mesh {
-        let cutter = gouge::parse_tool(tool)?;
+        let cutter = tool.as_deref().map(gouge::parse_tool).transpose()?;
+        if let Some(tool) = tool {
+            writeln!(io::stderr().lock(), "mesh verification: --tool {tool} overrides cutter geometry for all cutting moves")?;
+        }
         let bytes = run::read_bytes(mesh_path)?;
         let mesh = campanion_mesh::parse_stl(&bytes).map_err(|err| CliError::run(format!("STL: {err}")))?;
-        gouge::check_program(doc.program(), &mesh, cutter, jobfile::DEFAULT_JOB_CHORD_MM)?
+        match cutter {
+            Some(cutter) => gouge::check_program(doc.program(), &mesh, cutter, jobfile::DEFAULT_JOB_CHORD_MM)?,
+            None => gouge::check_program_tools(doc.program(), &mesh, jobfile::DEFAULT_JOB_CHORD_MM)?,
+        }
     } else {
         Vec::new()
     };
@@ -247,9 +253,9 @@ fn parse_verify(args: &[OsString]) -> Result<VerifyArgs, CliError> {
             let Some(tool) = tool.to_str() else {
                 return Err(CliError::usage("tool must be ball:R, flat:R or bull:R,C"));
             };
-            Some((PathBuf::from(mesh), tool.to_string()))
+            Some((PathBuf::from(mesh), Some(tool.to_string())))
         }
-        (Some(_), None) => return Err(CliError::usage("verify --mesh needs --tool")),
+        (Some(mesh), None) => Some((PathBuf::from(mesh), None)),
         (None, Some(_)) => return Err(CliError::usage("verify --tool needs --mesh")),
     };
     Ok(VerifyArgs { file: PathBuf::from(file), mesh })

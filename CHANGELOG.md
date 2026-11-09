@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Added
+
+- Optional flat, ball, bull and V-bit cutter geometry in IR tools. Run jobs preserve their shapes and resolve chamfer geometry per tool ID, rejecting conflicting definitions before output (#146).
+- `verify --mesh` uses each cutting move's tool geometry when `--tool` is omitted, including tool changes within a path. Missing shapes and unsupported V-bit verification fail explicitly; `--tool` remains a global override (#146).
+
 ## 0.10.0 — 2026-11-09
 
 Router gaps from the processes plan: cutter sense on diameter tools, onion-skin depth passes, a deterministic sheet packer with nesting checks, and a LinuxCNC router dialect with a cited probe cycle and vacuum/dust auxiliaries. This output has not been proven on a machine.

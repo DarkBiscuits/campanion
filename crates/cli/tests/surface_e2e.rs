@@ -284,6 +284,11 @@ fn lowered_dome_cut_is_reported_as_a_gouge() -> Result<(), String> {
         return Err(format!("clean dome verify --mesh exit {:?} stdout {clean_out} stderr {clean_err}", clean.status.code()));
     }
 
+    let automatic = campanion(&root, &["verify", &ir_arg, "--mesh", "examples/dome.stl"])?;
+    if automatic.status.code() != Some(0) || automatic.stdout != clean.stdout {
+        return Err(format!("automatic cutter verification differs: {}", output_text(&automatic.stderr)?));
+    }
+
     let ir_text = std::fs::read_to_string(&ir_path).map_err(|err| format!("read ir: {err}"))?;
     let mut ir: Value = serde_json::from_str(&ir_text).map_err(|err| format!("ir json: {err}"))?;
     let blocks = ir["program"]["toolpaths"]

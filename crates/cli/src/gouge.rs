@@ -12,6 +12,9 @@
 //! the mesh turned by that angle, in the machine view. A segment that changes angle is sampled at
 //! intermediate angles, each on the mesh turned by that angle.
 
+mod program;
+pub(crate) use program::check_program_tools;
+
 use std::borrow::Cow;
 
 use campanion_ir::{ArcSense, ClBlock, ClMotion, ClPath, MoveRole, Plane, Pose, Program, RotarySetup, Vec3 as IrVec, part_to_machine};
@@ -412,41 +415,52 @@ fn cutting_segments(path: &ClPath, sample_step: f64, setup: Option<&RotarySetup>
         let ClBlock::Motion(motion) = block else {
             continue;
         };
-        match motion {
-            ClMotion::Rapid { to, .. } => cursor = Some(*to),
-            ClMotion::Linear { to, role, .. } => {
-                if cutting(*role) {
-                    let start = cursor.unwrap_or(*to);
-                    push_segment(&mut segments, mesh_vec(machine_tip(setup, start)), mesh_vec(machine_tip(setup, *to)))?;
-                }
-                cursor = Some(*to);
-            }
-            ClMotion::Thread { to, .. } => {
-                let start = cursor.unwrap_or(*to);
-                push_segment(&mut segments, mesh_vec(machine_tip(setup, start)), mesh_vec(machine_tip(setup, *to)))?;
-                cursor = Some(*to);
-            }
-            ClMotion::Arc { to, plane, center, sense, role, .. } => {
-                if cutting(*role) {
-                    let Some(start) = cursor else {
-                        return Err(CliError::run("gouge check: arc needs a start position"));
-                    };
-                    append_curve(&mut segments, setup, start, *to, *center, *plane, *sense, None, sample_step)?;
-                }
-                cursor = Some(*to);
-            }
-            ClMotion::Helix { to, plane, center, sense, sweep, role, .. } => {
-                if cutting(*role) {
-                    let Some(start) = cursor else {
-                        return Err(CliError::run("gouge check: arc needs a start position"));
-                    };
-                    append_curve(&mut segments, setup, start, *to, *center, *plane, *sense, Some(*sweep), sample_step)?;
-                }
-                cursor = Some(*to);
-            }
-        }
+        append_cutting_motion(motion, sample_step, setup, &mut cursor, &mut segments)?;
     }
     Ok(segments)
+}
+
+fn append_cutting_motion(
+    motion: &ClMotion,
+    sample_step: f64,
+    setup: Option<&RotarySetup>,
+    cursor: &mut Option<Pose>,
+    segments: &mut Vec<(MeshVec, MeshVec)>,
+) -> Result<(), CliError> {
+    match motion {
+        ClMotion::Rapid { to, .. } => *cursor = Some(*to),
+        ClMotion::Linear { to, role, .. } => {
+            if cutting(*role) {
+                let start = cursor.unwrap_or(*to);
+                push_segment(segments, mesh_vec(machine_tip(setup, start)), mesh_vec(machine_tip(setup, *to)))?;
+            }
+            *cursor = Some(*to);
+        }
+        ClMotion::Thread { to, .. } => {
+            let start = cursor.unwrap_or(*to);
+            push_segment(segments, mesh_vec(machine_tip(setup, start)), mesh_vec(machine_tip(setup, *to)))?;
+            *cursor = Some(*to);
+        }
+        ClMotion::Arc { to, plane, center, sense, role, .. } => {
+            if cutting(*role) {
+                let Some(start) = *cursor else {
+                    return Err(CliError::run("gouge check: arc needs a start position"));
+                };
+                append_curve(segments, setup, start, *to, *center, *plane, *sense, None, sample_step)?;
+            }
+            *cursor = Some(*to);
+        }
+        ClMotion::Helix { to, plane, center, sense, sweep, role, .. } => {
+            if cutting(*role) {
+                let Some(start) = *cursor else {
+                    return Err(CliError::run("gouge check: arc needs a start position"));
+                };
+                append_curve(segments, setup, start, *to, *center, *plane, *sense, Some(*sweep), sample_step)?;
+            }
+            *cursor = Some(*to);
+        }
+    }
+    Ok(())
 }
 
 /// Tip in the frame the drop cutter uses. A rotary pose is turned back into the indexed view.

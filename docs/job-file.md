@@ -111,6 +111,14 @@ A shape other than flat is rejected when a profile, pocket, drill, engrave, face
 that tool. Those operations keep the flat diameter offset and do not read `shape`. A surface, a
 rough, a waterline or a rotary finish reads `shape`.
 
+Generated IR carries the resolved cutter shape on each diameter tool. Chamfers keep
+`v_angle_deg` and `tip_diameter` on their operations and also copy that geometry into the IR
+tool as a V-bit (angle in radians, tip diameter in millimetres). All chamfers sharing a tool ID
+must agree on angle and tip diameter; widths and clearances may differ. An explicit tool
+`shape` conflicts with chamfer-derived V-bit geometry, including explicit `"flat"`. Omit it
+for a chamfer cutter. Conflicts fail job loading before output is written; use separate tool
+IDs for different physical cutters. Job syntax does not add a V-bit `shape` variant in this change.
+
 A diameter tool may set `assembly`: stickout, flute, shank, a holder stack and an optional head.
 A kerf tool with `assembly` is an error. See [Tool assembly and collisions](#tool-assembly-and-collisions).
 
