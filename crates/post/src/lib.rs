@@ -36,6 +36,7 @@ mod geom;
 mod interp;
 mod read;
 mod rotary;
+mod units;
 mod write;
 
 pub use audit::{

@@ -99,7 +99,14 @@ pub fn compare(program: &Program, moves: &[ReadMove], tol: f64, post: &PostDef) 
                                 tol,
                                 index,
                                 drop_z,
-                                LineCheck { setup, angle: end_angle, angle_tol, feed: None, feed_decimals: post.decimals.feed },
+                                LineCheck {
+                                    setup,
+                                    angle: end_angle,
+                                    angle_tol,
+                                    feed: None,
+                                    feed_decimals: post.decimals.feed,
+                                    feed_scale: post.length_scale(),
+                                },
                             )?;
                         }
                     }
@@ -132,7 +139,14 @@ pub fn compare(program: &Program, moves: &[ReadMove], tol: f64, post: &PostDef) 
                                 tol,
                                 index,
                                 drop_z,
-                                LineCheck { setup, angle: end_angle, angle_tol, feed: feed_check, feed_decimals: post.decimals.feed },
+                                LineCheck {
+                                    setup,
+                                    angle: end_angle,
+                                    angle_tol,
+                                    feed: feed_check,
+                                    feed_decimals: post.decimals.feed,
+                                    feed_scale: post.length_scale(),
+                                },
                             )?;
                         }
                     }
@@ -217,7 +231,13 @@ fn skip_z_only(post: &PostDef, pos: Option<Xyz>, end: Xyz, rapid: bool) -> Resul
     let Some(pos) = pos else {
         return Ok(false);
     };
-    if !xy_text_eq(pos, end, post.decimals.linear, post.trailing_zeros, post.decimal_point)? {
+    if !xy_text_eq(
+        pos.map(|v| v / post.length_scale()),
+        end.map(|v| v / post.length_scale()),
+        post.decimals.linear,
+        post.trailing_zeros,
+        post.decimal_point,
+    )? {
         return Ok(false);
     }
     let drop_rapid = rapid && !post.process_feeds.rapid_z;
@@ -350,7 +370,7 @@ fn consume_fallback(
             if want_inverse {
                 check_recovered_feed(got_feed, geom::dist3(prev_cart, cart), ir_feed, index)?;
             } else {
-                check_feed_number(got_feed, ir_feed, post.decimals.feed, index)?;
+                check_feed_number(got_feed, ir_feed, post.decimals.feed, post.length_scale(), index)?;
             }
         }
         prev_cart = cart;
@@ -404,6 +424,7 @@ struct LineCheck<'a> {
     angle_tol: f64,
     feed: Option<FeedCheck>,
     feed_decimals: u8,
+    feed_scale: f64,
 }
 
 fn take_line(
@@ -446,7 +467,7 @@ fn take_line(
             check_recovered_feed(got_feed, feed.length, feed.ir_feed, index)?;
         } else {
             let expected = if feed.inverse { rotary::inverse_minutes_feed(feed.ir_feed, feed.length)? } else { feed.ir_feed };
-            check_feed_number(got_feed, expected, check.feed_decimals, index)?;
+            check_feed_number(got_feed, expected, check.feed_decimals, if feed.inverse { 1.0 } else { check.feed_scale }, index)?;
         }
     }
     Ok(())
@@ -648,7 +669,7 @@ fn consume_curve(
                         // A short move that merely ends near this arc is the next motion.
                         // The tail is another block of this same circle. R-word centre error
                         // follows the output quantum, not a loose chord tolerance.
-                        let quantum = 10_f64.powi(-i32::from(check.post.linear_decimals()));
+                        let quantum = check.post.linear_quantum();
                         let centre_tol =
                             if radius.is_some() { radius_centre_limit(point, next_end, center, plane, quantum) } else { tol.max(quantum) };
                         centre_ok(got_center, center, plane, radius.is_some(), centre_tol)
@@ -790,7 +811,7 @@ fn take_thread(
     if geom::dist3(got, end) > tol {
         return Err(invalid(format!("motion {index}: end differs by {:.6} mm", geom::dist3(got, end))));
     }
-    let quantum = 10_f64.powi(-i32::from(post.linear_decimals()));
+    let quantum = post.linear_quantum();
     let limit = tol.max(quantum * 0.51);
     if (got_lead - lead).abs() > limit {
         return Err(invalid(format!("motion {index}: lead {got_lead} differs from {lead}")));
@@ -850,11 +871,11 @@ fn check_angle(got: Option<f64>, expect: f64, tol: f64, index: usize) -> Result<
     if gap > tol { Err(invalid(format!("motion {index}: rotary angle differs by {gap:.6} deg"))) } else { Ok(()) }
 }
 
-fn check_feed_number(got: Option<f64>, expected: f64, decimals: u8, index: usize) -> Result<()> {
+fn check_feed_number(got: Option<f64>, expected: f64, decimals: u8, scale: f64, index: usize) -> Result<()> {
     let Some(got) = got else {
         return Err(invalid(format!("motion {index}: missing feed")));
     };
-    let quantum = 10_f64.powi(-i32::from(decimals));
+    let quantum = scale * 10_f64.powi(-i32::from(decimals));
     let limit = quantum * 0.51 + expected.abs() * 1e-12;
     if (got - expected).abs() > limit { Err(invalid(format!("motion {index}: feed {got} differs from {expected}"))) } else { Ok(()) }
 }
@@ -906,14 +927,14 @@ fn check_curve_feed(
         }
         let implied = check.ir_feed / got;
         let length = geom::dist3(prev, point);
-        let quantum = 10_f64.powi(-i32::from(check.post.decimals.linear));
+        let quantum = check.post.linear_quantum();
         let limit = (4.0 * quantum).max(tol);
         if (implied - length).abs() > limit {
             return Err(invalid(format!("motion {index}: inverse-time feed implies {implied:.6} mm, segment is {length:.6} mm")));
         }
         Ok(())
     } else {
-        check_feed_number(move_feed(mv), check.ir_feed, check.post.decimals.feed, index)
+        check_feed_number(move_feed(mv), check.ir_feed, check.post.decimals.feed, check.post.length_scale(), index)
     }
 }
 

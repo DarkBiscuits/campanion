@@ -850,7 +850,7 @@ impl<'a> Parser<'a> {
             match code {
                 7 => self.x_mode = XMode::Diameter,
                 8 => self.x_mode = XMode::Radius,
-                20 => return Err(fail(line_no, "inches are not supported")),
+                20 => return Err(fail(line_no, "inch lathe verification is not supported yet")),
                 21 => self.units = Some(UnitMode::Millimetre),
                 40 => self.nose = NoseComp::Off,
                 41 => self.nose = NoseComp::Left,
@@ -1252,7 +1252,8 @@ impl<'a> Parser<'a> {
 impl Codes {
     fn from_post(post: &PostDef, lathe: &LatheOutput) -> Self {
         let mut known_g = BTreeSet::from([
-            0, 1, 2, 3, 4, 7, 8, 17, 18, 19, 21, 28, 40, 41, 42, 43, 49, 50, 53, 54, 55, 56, 57, 58, 59, 61, 64, 80, 90, 93, 94, 95, 96, 97, 98, 99,
+            0, 1, 2, 3, 4, 7, 8, 17, 18, 19, 20, 21, 28, 40, 41, 42, 43, 49, 50, 53, 54, 55, 56, 57, 58, 59, 61, 64, 80, 90, 93, 94, 95, 96, 97, 98,
+            99,
         ]);
         let mut known_m = BTreeSet::from([2, 3, 4, 5, 6, 7, 8, 9, 30]);
         let mut absorb = |lines: &[String]| {

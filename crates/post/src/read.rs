@@ -185,10 +185,13 @@ impl<'a> Parser<'a> {
 }
 
 /// Parse `text` with the same post that produced it.
+/// Lengths are returned in millimetres and G94 feeds in millimetres per minute.
+/// G93 inverse-time feeds remain reciprocal minutes.
 pub fn read_back(text: &str, post: &PostDef) -> Result<Vec<ReadMove>> {
     if text.len() > 64 * 1024 * 1024 {
         return Err(invalid("g-code is too large"));
     }
+    crate::units::validate(text, post)?;
     let mut parser = Parser::new(post);
     let mut moves = Vec::new();
     for (index, line) in text.lines().enumerate() {
@@ -210,7 +213,7 @@ impl<'a> Parser<'a> {
         self.post.probe_number().is_some_and(|code| (value - code).abs() < 1e-6)
     }
 
-    fn interpret(&mut self, words: Vec<(char, f64)>, raw: &str) -> Result<Option<ReadMove>> {
+    fn interpret(&mut self, mut words: Vec<(char, f64)>, raw: &str) -> Result<Option<ReadMove>> {
         self.note_sub_line(raw);
         if let Some((letter, value)) = words.first().copied()
             && letter == 'O'
@@ -245,6 +248,27 @@ impl<'a> Parser<'a> {
                         || self.is_b_head_letter(letter)
                         || self.is_transfer_letter(letter) => {}
                 letter => return Err(invalid(format!("unexpected word {letter}"))),
+            }
+        }
+        // Resolve feed mode before scaling words, regardless of their order in the block.
+        if self.post.is_inch() {
+            let inverse = if g_codes.contains(&93) {
+                true
+            } else if g_codes.contains(&94) {
+                false
+            } else {
+                self.inverse_time
+            };
+            if g_codes.contains(&93) && g_codes.contains(&94) {
+                return Err(invalid("line has conflicting feed modes"));
+            }
+            for (letter, value) in &mut words {
+                if axes.contains(letter) || (!g_codes.contains(&4) && matches!(*letter, 'I' | 'J' | 'K' | 'R')) || (*letter == 'F' && !inverse) {
+                    *value *= self.post.length_scale();
+                    if !value.is_finite() {
+                        return Err(invalid("scaled length or feed is not finite"));
+                    }
+                }
             }
         }
         let f = unique(&words, 'F')?;
@@ -322,7 +346,8 @@ impl<'a> Parser<'a> {
                     plane = Plane::Yz;
                     planes += 1;
                 }
-                20 => return Err(invalid("inches are not supported")),
+                20 if self.post.is_inch() => {}
+                20 => return Err(invalid("units disagree with post")),
                 91 => return Err(invalid("incremental motion is not supported")),
                 7 | 8 | 50 | 96 | 97 | 98 if self.post.is_lathe() => {}
                 28 if self.post.is_lathe() => {}
@@ -363,6 +388,9 @@ impl<'a> Parser<'a> {
         // move in a frame this parser does not track.
         if words.iter().any(|(letter, _)| *letter == 'U' || *letter == 'W') && !g_codes.contains(&28) {
             return Err(invalid("incremental U or W is only accepted on lathe G28"));
+        }
+        if self.post.is_inch() && inverse_time != self.inverse_time && f.is_none() {
+            self.feed = None;
         }
         self.inverse_time = inverse_time;
         // G53 is a non-modal machine-coordinate move. G28 is a reference return (Fanuc writes
@@ -444,6 +472,14 @@ impl<'a> Parser<'a> {
             self.feed = Some(feed);
         }
         let feed = self.feed;
+        if self.post.is_inch() && !matches!(motion, Motion::Rapid) {
+            if !feed.is_some_and(|value| value.is_finite() && value > 0.0) {
+                return Err(invalid("feed move has no positive feed"));
+            }
+            if self.inverse_time && f.is_none() {
+                return Err(invalid("inverse-time block has no F"));
+            }
+        }
         let rotary = self.angle;
         let inverse_time = self.inverse_time;
         let five = self.five;
@@ -467,7 +503,7 @@ impl<'a> Parser<'a> {
                     return Err(invalid("arc has both R and IJK"));
                 }
                 let center = if let Some(radius) = radius {
-                    let quantum = 10_f64.powi(-i32::from(self.post.decimals.linear));
+                    let quantum = self.post.linear_quantum();
                     geom::center_from_radius(start, end, radius, sense, plane, quantum)?
                 } else if i.is_some() || j.is_some() || k.is_some() {
                     [start[0] + i.unwrap_or(0.0), start[1] + j.unwrap_or(0.0), start[2] + k.unwrap_or(0.0)]
@@ -617,12 +653,14 @@ impl<'a> Parser<'a> {
     }
 
     fn is_inverse_on(&self, code: u16) -> bool {
-        self.post.rotary.as_ref().is_some_and(|rotary| rotary.on_code() == Some(code))
+        (self.post.is_inch() && code == 93)
+            || self.post.rotary.as_ref().is_some_and(|rotary| rotary.on_code() == Some(code))
             || self.post.five_axis.as_ref().and_then(|five| five.continuous.as_ref()).is_some_and(|cont| cont.on_code() == Some(code))
     }
 
     fn is_inverse_off(&self, code: u16) -> bool {
-        self.post.rotary.as_ref().is_some_and(|rotary| rotary.off_code() == Some(code))
+        (self.post.is_inch() && code == 94)
+            || self.post.rotary.as_ref().is_some_and(|rotary| rotary.off_code() == Some(code))
             || self.post.five_axis.as_ref().and_then(|five| five.continuous.as_ref()).is_some_and(|cont| cont.off_code() == Some(code))
     }
 
@@ -842,7 +880,7 @@ fn strip_line_number(words: &mut Vec<(char, f64)>, prefix: char) -> Result<()> {
     Ok(())
 }
 
-fn strip_comments(line: &str) -> String {
+pub(crate) fn strip_comments(line: &str) -> String {
     let mut out = String::with_capacity(line.len());
     let mut chars = line.chars();
     while let Some(ch) = chars.next() {
@@ -862,7 +900,7 @@ fn strip_comments(line: &str) -> String {
     out
 }
 
-fn tokenize(line: &str) -> Result<Vec<(char, f64)>> {
+pub(crate) fn tokenize(line: &str) -> Result<Vec<(char, f64)>> {
     let bytes = line.as_bytes();
     let mut index = 0;
     let mut words = Vec::new();

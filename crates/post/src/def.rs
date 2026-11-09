@@ -741,8 +741,11 @@ impl PostDef {
         check_text("name", &self.name, 1, 128)?;
         check_text("description", &self.description, 0, 1024)?;
         check_references(&self.references)?;
-        if self.units != "mm" {
-            return Err(field("units", "only mm is supported"));
+        if !matches!(self.units.as_str(), "mm" | "inch") {
+            return Err(field("units", "must be mm or inch"));
+        }
+        if self.is_inch() && (self.rotary.is_some() || self.five_axis.is_some() || self.lathe.is_some()) {
+            return Err(crate::error::unsupported("inch output is only supported for three-axis mill posts"));
         }
         check_line_numbers(&mut self.line_numbers)?;
         check_decimals(&self.decimals)?;
@@ -847,6 +850,19 @@ impl PostDef {
     /// Maximum characters on one output line, when the post sets a limit.
     pub fn max_line_length(&self) -> Option<usize> {
         self.max_line_length.map(|n| n as usize)
+    }
+
+    pub(crate) fn is_inch(&self) -> bool {
+        self.units == "inch"
+    }
+
+    /// Millimetres per output length unit. The IR always remains in millimetres.
+    pub(crate) fn length_scale(&self) -> f64 {
+        if self.is_inch() { 25.4 } else { 1.0 }
+    }
+
+    pub(crate) fn linear_quantum(&self) -> f64 {
+        self.length_scale() * 10_f64.powi(-i32::from(self.decimals.linear))
     }
 
     /// Digits after the decimal point on `X` `Y` `Z` `I` `J` `K` `R`.

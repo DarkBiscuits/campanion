@@ -94,6 +94,7 @@ pub fn post_program(program: &Program, post: &PostDef, options: &PostOptions) ->
     }
     writer.finish_five_axis()?;
     writer.templates("program_end", &post.program_end, &header_vars)?;
+    crate::units::validate_written(&writer.out, post)?;
     Ok(writer.out)
 }
 
@@ -1004,7 +1005,7 @@ impl<'a> Writer<'a> {
         let mut words = vec![thread.code.clone()];
         let rounded = self.push_lathe_axes(&mut words, posted.xyz)?;
         // A thread stays a ZX move, so it carries no C word.
-        let lead_text = self.format_axis(lead, self.post.decimals.linear)?;
+        let lead_text = self.format_length(lead, self.post.decimals.linear)?;
         words.push(format!("{}{lead_text}", thread.lead_word));
         self.linear = None;
         if thread.lead_word == "F" {
@@ -1222,9 +1223,9 @@ impl<'a> Writer<'a> {
             return Err(invalid("axis letters are missing"));
         };
         let rounded = self.round_xyz(posted.xyz)?;
-        let x = self.format_axis(rounded[0], self.post.decimals.linear)?;
-        let y = self.format_axis(rounded[1], self.post.decimals.linear)?;
-        let z = self.format_axis(rounded[2], self.post.decimals.linear)?;
+        let x = self.format_length(rounded[0], self.post.decimals.linear)?;
+        let y = self.format_length(rounded[1], self.post.decimals.linear)?;
+        let z = self.format_length(rounded[2], self.post.decimals.linear)?;
         self.emit_words(&["G0".to_string(), format!("{lx}{x}"), format!("{ly}{y}")])?;
         self.linear = Some("G0");
         self.emit_words(&["G0".to_string(), format!("{lz}{z}")])?;
@@ -1402,9 +1403,9 @@ impl<'a> Writer<'a> {
             let chord = geom::in_plane_len(plane, start, rounded);
             if chord > 1e-9 && ir_radius > 1e-12 {
                 let magnitude = posted_radius.max(chord * 0.5);
-                let quantum = 10_f64.powi(-i32::from(self.post.decimals.linear));
-                let r_text = self.format_axis(magnitude, self.post.decimals.linear)?;
-                let r_written = r_text.parse::<f64>().map_err(|_| invalid("axis value is not a number"))?;
+                let quantum = self.post.linear_quantum();
+                let r_text = self.format_length(magnitude, self.post.decimals.linear)?;
+                let r_written = r_text.parse::<f64>().map_err(|_| invalid("axis value is not a number"))? * self.post.length_scale();
                 let written = self.written_sense(sense, plane);
                 let over = match geom::center_from_radius(start, rounded, r_written, written, plane, quantum) {
                     Ok(read_center) => {
@@ -1431,11 +1432,11 @@ impl<'a> Writer<'a> {
             let curve_start = self.exact.unwrap_or(start);
             let ir_radius = geom::in_plane_len(plane, curve_start, center);
             if ir_radius > 1e-12 {
-                let quantum = 10_f64.powi(-i32::from(self.post.decimals.linear));
+                let quantum = self.post.linear_quantum();
                 let mut read_center = start;
                 for (offset, (axis, value)) in read_center.iter_mut().zip(start.iter().zip(center.iter())) {
-                    let text = self.format_axis(value - axis, self.post.decimals.linear)?;
-                    *offset += text.parse::<f64>().map_err(|_| invalid("axis value is not a number"))?;
+                    let text = self.format_length(value - axis, self.post.decimals.linear)?;
+                    *offset += text.parse::<f64>().map_err(|_| invalid("axis value is not a number"))? * self.post.length_scale();
                 }
                 let controller = geom::forward_delta(
                     geom::angle_of(plane, start, read_center),
@@ -1465,7 +1466,7 @@ impl<'a> Writer<'a> {
                 // block still fits; a semicircle then reads back with its centre on the midpoint.
                 let magnitude = if chord > 0.0 { radius.max(chord * 0.5) } else { radius };
                 let signed = if sweep > std::f64::consts::PI + 1e-8 { -magnitude } else { magnitude };
-                words.push(format!("R{}", self.format_axis(signed, self.post.decimals.linear)?));
+                words.push(format!("R{}", self.format_length(signed, self.post.decimals.linear)?));
             }
             ArcMode::Ijk => {
                 let offsets = [center[0] - start[0], center[1] - start[1], center[2] - start[2]];
@@ -1476,7 +1477,7 @@ impl<'a> Writer<'a> {
                     if *letter == "K" && self.mirror_z() {
                         value = -value;
                     }
-                    words.push(format!("{letter}{}", self.format_axis(value, self.post.decimals.linear)?));
+                    words.push(format!("{letter}{}", self.format_length(value, self.post.decimals.linear)?));
                 }
             }
             ArcMode::Lines => return Err(invalid("line mode reached an arc block")),
@@ -1661,16 +1662,25 @@ impl<'a> Writer<'a> {
         let Some(pos) = self.pos else {
             return Ok(false);
         };
-        if !xy_text_eq(pos, end, self.post.decimals.linear, self.post.trailing_zeros, self.post.decimal_point)? {
+        if !xy_text_eq(
+            pos.map(|v| v / self.post.length_scale()),
+            end.map(|v| v / self.post.length_scale()),
+            self.post.decimals.linear,
+            self.post.trailing_zeros,
+            self.post.decimal_point,
+        )? {
             return Ok(false);
         }
         let drop_rapid = code == "G0" && !self.post.process_feeds.rapid_z;
         Ok(drop_rapid || self.post.drop_z())
     }
 
-    /// `X` `Y` `Z` `I` `J` `K` `R`, rotary `A`/`B`, and lathe `X`/`Z`.
-    ///
-    /// Feed, spindle, dwell, and sequence numbers stay on [`format_fixed`].
+    /// Convert an internal millimetre length to the post's output units.
+    fn format_length(&self, value: f64, decimals: u8) -> Result<String> {
+        self.format_axis(value / self.post.length_scale(), decimals)
+    }
+
+    /// Format a dimensional word already in output units, or an angle in degrees.
     fn format_axis(&self, value: f64, decimals: u8) -> Result<String> {
         format_dim(value, decimals, self.post.trailing_zeros, self.post.decimal_point)
     }
@@ -1681,8 +1691,8 @@ impl<'a> Writer<'a> {
             let Some(value) = end.get(index).copied() else {
                 return Err(invalid("axis value is missing"));
             };
-            let text = self.format_axis(value, self.post.decimals.linear)?;
-            *slot = text.parse::<f64>().map_err(|_| invalid("axis value is not a number"))?;
+            let text = self.format_length(value, self.post.decimals.linear)?;
+            *slot = text.parse::<f64>().map_err(|_| invalid("axis value is not a number"))? * self.post.length_scale();
         }
         Ok(rounded)
     }
@@ -1692,9 +1702,9 @@ impl<'a> Writer<'a> {
     /// An XY or YZ arc counts as a Y move even when the endpoint Y is unchanged. A move that
     /// returns Y to 0 is still a Y move. The following centreline move restores `turn_plane`.
     fn prepare_lathe_motion(&mut self, end: Xyz, c: Option<f64>, axis: Vec3, kind: LatheKind) -> Result<()> {
-        let y_text = self.format_axis(end[1], self.post.decimals.linear)?;
+        let y_text = self.format_length(end[1], self.post.decimals.linear)?;
         let y_changes = self.y_text_changes(&y_text)?;
-        let zero = self.format_axis(0.0, self.post.decimals.linear)?;
+        let zero = self.format_length(0.0, self.post.decimals.linear)?;
         match kind {
             LatheKind::Arc(plane) if plane != Plane::Zx => self.prepare_milling_arc(axis, plane, c),
             _ if y_changes => {
@@ -1800,7 +1810,7 @@ impl<'a> Writer<'a> {
 
     /// `None` modal means centreline 0 has not been written, which compares equal to a formatted 0.
     fn y_text_changes(&self, y_text: &str) -> Result<bool> {
-        let zero = self.format_axis(0.0, self.post.decimals.linear)?;
+        let zero = self.format_length(0.0, self.post.decimals.linear)?;
         let current = self.y_modal.as_deref().unwrap_or(zero.as_str());
         Ok(y_text != current)
     }
@@ -1821,7 +1831,7 @@ impl<'a> Writer<'a> {
             let Some(value) = rounded.get(index).copied() else {
                 return Err(invalid("axis value is missing"));
             };
-            let text = self.format_axis(value, self.post.decimals.linear)?;
+            let text = self.format_length(value, self.post.decimals.linear)?;
             words.push(format!("{letter}{text}"));
         }
         Ok(rounded)
@@ -1840,10 +1850,10 @@ impl<'a> Writer<'a> {
         let radius = end[0] + dr;
         let z_tip = end[2] + dz;
         let x_out = if lathe.diameter_mode { radius * 2.0 } else { radius };
-        let x_text = self.format_axis(x_out, self.post.decimals.linear)?;
-        let y_text = self.format_axis(end[1], self.post.decimals.linear)?;
+        let x_text = self.format_length(x_out, self.post.decimals.linear)?;
+        let y_text = self.format_length(end[1], self.post.decimals.linear)?;
         let z_out = if self.mirror_z() { -z_tip } else { z_tip };
-        let z_text = self.format_axis(z_out, self.post.decimals.linear)?;
+        let z_text = self.format_length(z_out, self.post.decimals.linear)?;
         words.push(format!("{x_letter}{x_text}"));
         let has_y = lathe.y_axis.is_some();
         if has_y && (self.force_axes || self.y_text_changes(&y_text)?) {
@@ -1885,9 +1895,9 @@ impl<'a> Writer<'a> {
         let z_letter = letters.get(2).copied().ok_or_else(|| invalid("axis value is missing"))?;
         let x_diameter = self.interp_x_diameter();
         let x_out = if x_diameter { end[0] * 2.0 } else { end[0] };
-        let x_text = self.format_axis(x_out, self.post.decimals.linear)?;
-        let y_text = self.format_axis(end[1], self.post.decimals.linear)?;
-        let z_text = self.format_axis(end[2], self.post.decimals.linear)?;
+        let x_text = self.format_length(x_out, self.post.decimals.linear)?;
+        let y_text = self.format_length(end[1], self.post.decimals.linear)?;
+        let z_text = self.format_length(end[2], self.post.decimals.linear)?;
         words.push(format!("{x_letter}{x_text}"));
         words.push(format!("{y_letter}{y_text}"));
         words.push(format!("{z_letter}{z_text}"));
@@ -1930,7 +1940,7 @@ impl<'a> Writer<'a> {
         if !(feed.is_finite() && feed > 0.0) {
             return Err(invalid("feed must be positive"));
         }
-        let text = format_fixed(feed, self.post.decimals.feed, self.post.trailing_zeros)?;
+        let text = format_fixed(feed / self.post.length_scale(), self.post.decimals.feed, self.post.trailing_zeros)?;
         // A positive feed can still round to 0 at this post's F precision (`F0`, `F0.0000`).
         let written: f64 = text.parse().map_err(|_| invalid("feed is not a number"))?;
         if !(written.is_finite() && written > 0.0) {
@@ -2093,11 +2103,11 @@ impl<'a> Writer<'a> {
             .ok_or_else(|| unsupported(format!("post `{}` has no bar feeder", self.post.id())))?;
         let mut words = vec![bar.code];
         if let Some(length) = part_length {
-            let text = self.format_axis(length, self.post.decimals.linear)?;
+            let text = self.format_length(length, self.post.decimals.linear)?;
             words.push(format!("{}{text}", bar.part_length_word));
         }
         if let Some(clamp) = min_clamp {
-            let text = self.format_axis(clamp, self.post.decimals.linear)?;
+            let text = self.format_length(clamp, self.post.decimals.linear)?;
             words.push(format!("{}{text}", bar.min_clamp_word));
         }
         self.emit_words(&words)
@@ -2736,8 +2746,8 @@ impl<'a> Writer<'a> {
         }
         if self.prepare_interp(false)? {
             let lines = self.cylinder_lines(true);
-            let radius_text = self.format_axis(radius, self.post.decimals.linear)?;
-            let diameter_text = self.format_axis(radius * 2.0, self.post.decimals.linear)?;
+            let radius_text = self.format_length(radius, self.post.decimals.linear)?;
+            let diameter_text = self.format_length(radius * 2.0, self.post.decimals.linear)?;
             self.templates(
                 "lathe.cylinder_interp.on",
                 &lines,
