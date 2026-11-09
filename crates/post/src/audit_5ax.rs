@@ -4,6 +4,7 @@
 //! work frame, TCP, tool-length offset, inverse time, rotary words, and `G53` machine retracts.
 //! `G53` is not a motion and does not change the modal position or the motion mode. Rotary words
 //! and inverse-time codes on that line still update, matching [`crate::read_back`].
+//! `G91.1` confirms incremental IJK without changing positioning; `G90.1` is rejected.
 //!
 //! An index block is rotary words with no `X` `Y` `Z`. It is not a motion. LinuxCNC leaves the
 //! work-frame and TCP hooks empty, so those flags stay off; the machine-mode transform and the
@@ -898,6 +899,11 @@ fn parse_words(line_no: usize, words: &[Word]) -> Result<Parsed> {
     let mut saw_t = false;
     for word in words {
         match word.letter {
+            // IJK is already incremental; keep arc-centre mode separate from positioning.
+            'G' if word.value == 91.1 => {}
+            'G' if word.value == 90.1 => {
+                return Err(fail(line_no, "G90.1 absolute arc centres are not supported; use G91.1 for incremental IJK"));
+            }
             'G' => parsed.g.push(g_or_m(line_no, word, 'G')?),
             'M' => parsed.m.push(g_or_m(line_no, word, 'M')?),
             'F' => {
