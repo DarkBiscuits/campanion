@@ -4,6 +4,32 @@ RS274/NGC posts. A post definition is JSON (`posts/linuxcnc.json` and the other 
 
 `decimal_point`, when true, keeps a decimal point on every dimensional word (`X` `Y` `Z`, `I` `J` `K`, `R`, rotary `A`/`B`, and lathe `X`/`Z`): a whole number is `52.` and zero is `0.`. Fanuc and Haas controls read a word written without a decimal point as least-input increments, so `X52` is 0.052 mm and `A90` is 0.09 degrees. Feed (`F`), spindle (`S`), dwell (`P`), line numbers, and tool and program numbers are left alone. LinuxCNC, Mach3, Grbl, and plasma omit the flag and read plain decimals.
 
+## Inch output
+
+Custom three-axis mill/router posts may set `"units": "inch"`. Built-in posts stay metric.
+Use the existing `--post FILE.json` option; input job units and output post units are independent.
+The IR, probe targets, feeds, and `PostOptions::arc_tolerance` remain in millimetres and mm/min.
+The writer converts linear axes, IJK offsets, arc radii, and feeds to inches and inches/minute.
+Dwell times, spindle speeds, identifiers, and digital-output pins are unchanged.
+
+Start the inch post's header with `G20` and use absolute motion and units-per-minute feeds
+(`G90`, `G94`). The writer rejects missing or conflicting units and templates selecting G91,
+G93, or G95. A program uses one unit system throughout; switches to G21 are rejected even in
+its footer. Literal numbers in templates are already in output units: review such values as
+`G64 P0.01` when adapting a metric post. They are not automatically converted.
+
+`decimals.linear` and `decimals.feed` specify digits in the **output** units. Four linear digits
+in inches have a 0.00254 mm increment. Choose enough precision for the required physical
+accuracy; `compare`'s positional tolerance is still supplied in mm. Rounding guards and feed
+comparison use the physical output increment. Feeds that round to zero are rejected.
+
+`read_back` and the mill `audit` normalize lengths to mm and G94 feeds to mm/min. The audit
+retains `UnitMode::Inch` to identify the actual declaration. G93 feeds in read-back/audit remain
+reciprocal minutes. Unit and feed-mode words apply to the whole block regardless of word order.
+
+Inch posts with `rotary`, `five_axis`, or `lathe` configurations are not supported yet; loading
+one returns an explicit error. Their metric output and verification are unchanged.
+
 ## Process cycle
 
 `process_cycle` is `hold` or `per_cut`. Omit it for `hold`.

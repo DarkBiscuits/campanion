@@ -6,6 +6,7 @@
 
 - Optional flat, ball, bull and V-bit cutter geometry in IR tools. Run jobs preserve their shapes and resolve chamfer geometry per tool ID, rejecting conflicting definitions before output (#146).
 - `verify --mesh` uses each cutting move's tool geometry when `--tool` is omitted, including tool changes within a path. Missing shapes and unsupported V-bit verification fail explicitly; `--tool` remains a global override (#146).
+- Three-axis mill and router posts may set `"units": "inch"`. The IR and physical tolerances stay in millimetres. The writer emits `G20` and converts linear words (`X` `Y` `Z`, `I` `J` `K`, `R`) and units-per-minute feeds; read-back and mill audit convert them back to millimetres. Template literals are not converted. Rotary, five-axis, and lathe inch configurations are refused. Built-in posts stay metric. This output has not been proven on a machine (#88).
 
 ### Fixed
 

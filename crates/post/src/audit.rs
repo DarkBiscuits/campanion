@@ -138,9 +138,9 @@ impl SpindleState {
 pub struct ArcReplay {
     /// `G2` or `G3`.
     pub sense: ArcSense,
-    /// Absolute centre.
+    /// Absolute centre in millimetres.
     pub center: [f64; 3],
-    /// Signed radius when the block used `R`.
+    /// Signed radius in millimetres when the block used `R`.
     pub radius: Option<f64>,
 }
 
@@ -159,7 +159,7 @@ pub struct MotionState {
     pub units: UnitMode,
     /// Feed mode after this block.
     pub feed_mode: FeedMode,
-    /// Active feed, including a modal `F` from an earlier block.
+    /// Active feed in mm/min (G94) or reciprocal minutes (G93), including a modal `F`.
     pub feed: Option<f64>,
     /// This block carried its own `F` word.
     pub feed_on_block: bool,
@@ -173,7 +173,7 @@ pub struct MotionState {
     pub spindle: SpindleState,
     /// Coolant.
     pub coolant: CoolantState,
-    /// Absolute end, in the frame the post wrote. An omitted axis stays at the previous value.
+    /// Absolute end in millimetres, in the frame the post wrote. Omitted axes retain their value.
     pub end: [f64; 3],
     /// Set on `G2` and `G3`.
     pub arc: Option<ArcReplay>,
@@ -384,6 +384,7 @@ impl<'a> Parser<'a> {
     }
 
     fn interpret(&mut self, line_no: usize, words: &[Word]) -> Result<()> {
+        let previous_feed_mode = self.feed_mode;
         let previous_motion = self.motion;
         let previous_plane = self.plane;
         let mut machine_move = false;
@@ -485,6 +486,33 @@ impl<'a> Parser<'a> {
                 letter if Some(letter) == axes[1] => set_unique(line_no, &mut y, word)?,
                 letter if Some(letter) == axes[2] => set_unique(line_no, &mut z, word)?,
                 letter => return Err(fail(line_no, format!("unexpected word {letter}"))),
+            }
+        }
+
+        // Resolve modal G words before normalizing this block's lengths and feed.
+        if self.post.is_inch() {
+            if previous_feed_mode != self.feed_mode && !feed_on_block {
+                self.feed = None;
+            }
+            if self.units.is_none()
+                && (feed_on_block || x.is_some() || y.is_some() || z.is_some() || i.is_some() || j.is_some() || k.is_some() || r.is_some())
+            {
+                return Err(fail(line_no, "length or feed before units are set"));
+            }
+            for v in [&mut x, &mut y, &mut z, &mut i, &mut j, &mut k, &mut r].into_iter().flatten() {
+                *v *= self.post.length_scale();
+                if !v.is_finite() {
+                    return Err(fail(line_no, "scaled length is not finite"));
+                }
+            }
+            if feed_on_block && self.feed_mode == FeedMode::PerMinute {
+                self.feed = self.feed.map(|f| f * self.post.length_scale());
+                if self.feed.is_some_and(|f| !f.is_finite()) {
+                    return Err(fail(line_no, "scaled feed is not finite"));
+                }
+            }
+            if saw_rotary {
+                return Err(fail(line_no, "inch rotary motion is not supported"));
             }
         }
 
@@ -618,7 +646,7 @@ impl<'a> Parser<'a> {
             17 => self.set_plane(line_no, Plane::Xy, block_plane)?,
             18 => self.set_plane(line_no, Plane::Zx, block_plane)?,
             19 => self.set_plane(line_no, Plane::Yz, block_plane)?,
-            20 => return Err(fail(line_no, "inches are not supported")),
+            20 => self.set_units(line_no, UnitMode::Inch)?,
             21 => self.set_units(line_no, UnitMode::Millimetre)?,
             40 | 53 | 64 | 80 => {}
             43 => *want_length = true,
@@ -666,6 +694,9 @@ impl<'a> Parser<'a> {
     }
 
     fn set_units(&mut self, line_no: usize, units: UnitMode) -> Result<()> {
+        if (units == UnitMode::Inch) != self.post.is_inch() {
+            return Err(fail(line_no, "units disagree with post"));
+        }
         if let Some(prev) = self.units
             && prev != units
         {
@@ -760,7 +791,7 @@ impl<'a> Parser<'a> {
             if radius == 0.0 {
                 return Err(fail(line_no, "arc radius must be non-zero"));
             }
-            let quantum = 10_f64.powi(-i32::from(self.post.linear_decimals()));
+            let quantum = self.post.linear_quantum();
             let center = geom::center_from_radius(self.pos, end, radius, sense, plane, quantum)?;
             (center, Some(radius))
         } else {

@@ -213,7 +213,7 @@ fn builtins_load_and_match_ids() {
 #[test]
 fn validation_names_the_field() {
     let mut raw = serde_json::from_str::<serde_json::Value>(include_str!("../posts/linuxcnc.json")).expect("json");
-    raw["units"] = serde_json::json!("inch");
+    raw["units"] = serde_json::json!("cm");
     let err = load_post(&raw.to_string()).expect_err("units");
     assert!(err.to_string().contains("units"), "{err}");
     raw["units"] = serde_json::json!("mm");
