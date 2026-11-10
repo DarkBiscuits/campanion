@@ -6,6 +6,9 @@
       {
         "id": 1,
         "name": null,
+        "shape": {
+          "type": "flat"
+        },
         "diameter": 6.0,
         "kerf": null
       }

@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Added
+
+- Optional flat, ball, bull and V-bit cutter geometry in IR tools. Run jobs preserve their shapes and resolve chamfer geometry per tool ID, rejecting conflicting definitions before output (#146).
+- `verify --mesh` uses each cutting move's tool geometry when `--tool` is omitted, including tool changes within a path. Missing shapes and unsupported V-bit verification fail explicitly; `--tool` remains a global override (#146).
+
 ### Fixed
 
 - Post read-back, mill audit and five-axis audit accept `G91.1` as an explicit declaration of incremental IJK arc centres. `G90.1` is refused with an explanation that absolute arc centres are not supported. Custom post headers can now declare `G91.1` without failing their own read-back (#144).
