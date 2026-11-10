@@ -24,6 +24,8 @@ A Probe event with a contact pose and a feed is one `G38.2` block: the three axi
 
 ## Modal audit
 
+`read_back`, `audit` and `audit_five` accept `G91.1` as an explicit declaration of incremental `I`/`J`/`K` arc centres, including in a custom post header or on a motion block. It does not change the `G90` positioning mode. `G90.1` is rejected with a specific diagnostic because absolute arc centres are not supported. Built-in post headers are unchanged.
+
 `audit` accepts `G53` machine-coordinate moves, including retracts in custom tool-change templates. They are excluded from part-frame motions and preserve the part position, motion mode and plane, matching `read_back` and the existing five-axis audit. This replay does not establish a machine-to-work coordinate transform or verify the physical retract path.
 
 `audit` reads posted mill G-code and returns the modal state a control would keep at each motion block: motion mode (`G0`–`G3`), plane (`G17`–`G19`), distance (`G90`/`G91`), units (`G20`/`G21`), feed mode (`G93`/`G94`), the active `F`, work offset (`G54`–`G59`), the tool in the spindle (`T` and `M6`, or the post's tool-change comment), tool-length offset (`G43`/`G49`), spindle or beam (`M3`/`M4`/`M5`, including a laser `S` word), coolant, and a modal rotary word when the post has `rotary`.
