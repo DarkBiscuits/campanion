@@ -6,6 +6,7 @@
 //!
 //! A word this checker does not know is an error, so a typo in a template fails here. Geometry
 //! is also checked against [`crate::read_back`] so the two readers stay aligned.
+//! `G91.1` confirms incremental IJK without changing positioning; `G90.1` is rejected.
 //!
 //! Lathe posts are rejected; lathe and mill-turn text is replayed by [`crate::audit_lathe`].
 //! Five-axis posts are replayed by [`crate::audit_five`]. Work offset
@@ -404,6 +405,11 @@ impl<'a> Parser<'a> {
 
         for word in words {
             match word.letter {
+                // IJK is already incremental; this declaration does not change G90/G91.
+                'G' if word.value == 91.1 => {}
+                'G' if word.value == 90.1 => {
+                    return Err(fail(line_no, "G90.1 absolute arc centres are not supported; use G91.1 for incremental IJK"));
+                }
                 'G' if self.is_probe_word(word) => probe_words += 1,
                 'G' => {
                     let code = g_or_m(line_no, word, 'G')?;
