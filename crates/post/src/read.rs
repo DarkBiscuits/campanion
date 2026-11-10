@@ -1,6 +1,7 @@
 //! Read the G-code dialect a post just wrote.
 //!
 //! The parser is modal and absolute. `I` `J` `K` are centre offsets from the start of the block.
+//! `G91.1` explicitly confirms those offsets; `G90.1` absolute arc centres are not supported.
 //! A signed `R` is the radius. Comments, line numbers, `%` tape edges and `O` program numbers are
 //! skipped. `G4` is a dwell. A post with a rotary block also accepts its A/B word and the
 //! inverse-time codes (`G93` / `G94` on LinuxCNC). Those stay modal the way `X` `Y` `Z` do.
@@ -232,6 +233,10 @@ impl<'a> Parser<'a> {
         let mut probe_count = 0u32;
         for (letter, value) in &words {
             match *letter {
+                // Arc-centre mode is independent of G90/G91 positioning. Match only the
+                // supported decimal code, without rounding other decimal G codes into it.
+                'G' if *value == 91.1 => {}
+                'G' if *value == 90.1 => return Err(invalid("G90.1 absolute arc centres are not supported; use G91.1 for incremental IJK")),
                 'G' if self.is_probe_code(*value) => probe_count += 1,
                 'G' => g_codes.push(g_number(*value)?),
                 'M' => saw_m = true,

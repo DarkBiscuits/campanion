@@ -76,6 +76,12 @@
 //! rotary and lets the secondary rotary take the tilt. [`subdivide_path`] inserts joint-space
 //! samples so each segment stays within a chord tolerance and a tool-axis tolerance.
 
+//! Tools may carry an optional [`ToolShape`], tagged by `type`: `flat`, `ball`, `bull`
+//! (`corner_radius` in millimetres), or `v_bit` (`angle` in radians and `tip_diameter` in
+//! millimetres). A shape needs a diameter tool without kerf. Absence means unknown, so old
+//! IR loads and serializes without adding a shape. Shape metadata does not imply that a
+//! mesh verifier supports every profile.
+
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 mod check;
@@ -90,6 +96,7 @@ mod program;
 mod rotary;
 mod schema;
 mod spindle;
+mod tool_shape;
 mod turning;
 mod verify;
 mod wrap;
@@ -111,6 +118,7 @@ pub use rotary::{
 };
 pub use schema::json_schema;
 pub use spindle::hold_spindle;
+pub use tool_shape::ToolShape;
 pub use turning::{Hand, Head, HeadAxis, Insert, InsertShape, Spindle, SpindleSpeed, TurnBinding, TurnInsert, TurnSection, TurnStock, TurningSetup};
 pub use verify::{Bounds, Issue, RefKind, VerifyOptions, VerifyReport, verify, verify_with};
 pub use wrap::{Cylinder, unwrap_pose, wrap_point, wrap_polyline};

@@ -788,7 +788,7 @@ fn finish_paths(job: &JobFile, paths: Vec<ClPath>, rotary: Option<RotarySetup>) 
     Ok(Document::new(program)?)
 }
 
-/// Copy each job tool into the IR, including an assembly when the job has one.
+/// Copy each job tool and its resolved cutter shape into the IR, including an assembly when present.
 fn ir_tools(job: &JobFile) -> Result<Vec<Tool>, CliError> {
     let mut tools = Vec::new();
     for tool in job.tools() {

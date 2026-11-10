@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+### Added
+
+- Optional flat, ball, bull and V-bit cutter geometry in IR tools. Run jobs preserve their shapes and resolve chamfer geometry per tool ID, rejecting conflicting definitions before output (#146).
+- `verify --mesh` uses each cutting move's tool geometry when `--tool` is omitted, including tool changes within a path. Missing shapes and unsupported V-bit verification fail explicitly; `--tool` remains a global override (#146).
+- Three-axis mill and router posts may set `"units": "inch"`. The IR and physical tolerances stay in millimetres. The writer emits `G20` and converts linear words (`X` `Y` `Z`, `I` `J` `K`, `R`) and units-per-minute feeds; read-back and mill audit convert them back to millimetres. Template literals are not converted. Rotary, five-axis, and lathe inch configurations are refused. Built-in posts stay metric. This output has not been proven on a machine (#88).
+
+### Fixed
+
+- Post read-back, mill audit and five-axis audit accept `G91.1` as an explicit declaration of incremental IJK arc centres. `G90.1` is refused with an explanation that absolute arc centres are not supported. Custom post headers can now declare `G91.1` without failing their own read-back (#144).
+- Mill modal audit accepts `G53` machine-coordinate retracts without adding a part-frame motion or changing its position, motion mode or plane, matching read-back (#145).
+
 ## 0.10.0 — 2026-11-09
 
 Router gaps from the processes plan: cutter sense on diameter tools, onion-skin depth passes, a deterministic sheet packer with nesting checks, and a LinuxCNC router dialect with a cited probe cycle and vacuum/dust auxiliaries. This output has not been proven on a machine.

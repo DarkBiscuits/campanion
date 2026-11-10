@@ -56,12 +56,23 @@ A `.step` or `.stp` lathe source is sectioned through the spindle by `solidcraft
 `campanion verify FILE` checks an IR file and prints a report. The status is 1 when the report
 has errors.
 
-Check cutting moves against an STL mesh. The tool is a radius in millimetres (`ball:3`, `flat:3`,
-or `bull:3,1`, where the number after the comma is the bull corner radius):
+Check cutting moves against an STL mesh using the IR's tool geometry:
 
 ```sh
-campanion verify out.json --mesh examples/dome.stl --tool ball:3
+campanion verify out.json --mesh examples/dome.stl
 ```
+
+Each path's tool ID establishes its initial cutter; tool-change events select the cutter for
+subsequent moves. A path without a tool ID inherits the active tool from the preceding path.
+Flat, ball and bull cutters are supported. A cutting move with no tool or missing shape metadata
+fails explicitly; older IR still loads but needs `--tool` for mesh verification. V-bit metadata
+is preserved, but mesh verification of a V-bit cut is not supported yet. Unused tools and
+non-cutting moves do not require a supported cutter shape.
+
+`--tool ball:3`, `--tool flat:3`, or `--tool bull:3,1` overrides geometry for **all** cutting moves
+and is identified on stderr. These numbers are radii in millimetres; the number after the comma
+is the bull corner radius. An override checks the supplied geometry, not the actual V-bit or
+unknown cutter. Verification without `--mesh` is unchanged.
 
 Tolerance is 0.01 mm, the job file's default chord tolerance. Samples are `min(0.25, tolerance*10)`
 mm apart. A gouge is printed like any other verify error and names the operation, the position and

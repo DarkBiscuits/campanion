@@ -2522,6 +2522,17 @@
             "null"
           ]
         },
+        "shape": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ToolShape"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Cutter profile. Absent means unknown; older IR remains valid."
+        },
         "upcut_length": {
           "description": "Upcut length at the tip, millimetres. Only with [`CutterSense::Compression`].",
           "format": "double",
@@ -2580,6 +2591,85 @@
         "holder"
       ],
       "type": "object"
+    },
+    "ToolShape": {
+      "description": "Rotating cutter profile. Absence on a tool means unknown, not flat.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "Flat end mill.",
+          "properties": {
+            "type": {
+              "const": "flat",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Ball nose with radius equal to half the tool diameter.",
+          "properties": {
+            "type": {
+              "const": "ball",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Bull nose with a positive corner radius smaller than the tool radius.",
+          "properties": {
+            "corner_radius": {
+              "description": "Millimetres.",
+              "format": "double",
+              "type": "number"
+            },
+            "type": {
+              "const": "bull",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "corner_radius"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "V-bit geometry; carrying this metadata does not imply verifier support.",
+          "properties": {
+            "angle": {
+              "description": "Included angle in radians, strictly between zero and pi.",
+              "format": "double",
+              "type": "number"
+            },
+            "tip_diameter": {
+              "description": "Flat tip diameter in millimetres, from zero up to (but excluding) tool diameter.",
+              "format": "double",
+              "type": "number"
+            },
+            "type": {
+              "const": "v_bit",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "angle",
+            "tip_diameter"
+          ],
+          "type": "object"
+        }
+      ]
     },
     "TurnBinding": {
       "additionalProperties": false,

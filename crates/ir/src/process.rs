@@ -8,9 +8,9 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::Result;
 use crate::check::{self, finite, non_negative, optional_name, positive, required_name, text_len};
 use crate::geom::Pose;
+use crate::{Result, ToolShape};
 
 /// Helix sense of a rotating router cutter.
 ///
@@ -34,6 +34,9 @@ pub struct Tool {
     id: u32,
     #[serde(default)]
     name: Option<String>,
+    /// Cutter profile. Absent means unknown; older IR remains valid.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    shape: Option<ToolShape>,
     /// Rotating tool diameter, millimetres.
     #[serde(default)]
     diameter: Option<f64>,
@@ -53,9 +56,21 @@ pub struct Tool {
 
 impl Tool {
     pub fn try_new(id: u32, name: Option<String>, diameter: Option<f64>, kerf: Option<f64>) -> Result<Self> {
-        let tool = Self { id, name, diameter, kerf, assembly: None, cutter_sense: None, upcut_length: None };
+        let tool = Self { id, name, diameter, kerf, shape: None, assembly: None, cutter_sense: None, upcut_length: None };
         tool.check()?;
         Ok(tool)
+    }
+
+    /// Store a cutter profile and validate it against this tool's diameter.
+    pub fn with_shape(self, shape: ToolShape) -> Result<Self> {
+        let tool = Self { shape: Some(shape), ..self };
+        tool.check()?;
+        Ok(tool)
+    }
+
+    /// Cutter profile. `None` means the file did not specify it.
+    pub fn shape(&self) -> Option<ToolShape> {
+        self.shape
     }
 
     /// Store a tool assembly and re-validate. A kerf tool cannot carry one.
@@ -114,6 +129,9 @@ impl Tool {
         }
         if let Some(kerf) = self.kerf {
             check_cutter(kerf, "kerf width")?;
+        }
+        if let Some(shape) = self.shape {
+            shape.check(self.diameter, self.kerf)?;
         }
         if let Some(assembly) = &self.assembly {
             if self.kerf.is_some() || self.diameter.is_none() {

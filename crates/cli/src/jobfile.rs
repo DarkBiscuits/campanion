@@ -1505,7 +1505,7 @@ fn parse_text(text: &str, job_path: &Path) -> Result<Body, JobFileError> {
     if kinematics.is_some() && rotary.is_some() {
         return Err(JobFileError::invalid("kinematics and rotary cannot be combined"));
     }
-    let tools = parse_tools(require(map, "tools").map_err(from_cli)?, scale)?;
+    let mut tools = parse_tools(require(map, "tools").map_err(from_cli)?, scale)?;
     let operations = parse_operations(require(map, "operations").map_err(from_cli)?, scale, &tools)?;
     if rotary.is_none()
         && let Some(operation) = operations.iter().find(|operation| operation.index_deg().is_some())
@@ -1537,6 +1537,7 @@ fn parse_text(text: &str, job_path: &Path) -> Result<Body, JobFileError> {
             check_reachable(kinematics, policy, operation)?;
         }
     }
+    resolve_ir_shapes(&mut tools, &operations)?;
     check_mesh_source(&source, &operations, &tools)?;
     let fixtures = parse_fixtures(optional(map, "fixtures"), scale)?;
     let collision = parse_collision(optional(map, "collision"), scale)?;
@@ -1803,7 +1804,49 @@ fn parse_tool_value(value: &Value, scale: f64) -> Result<JobTool, JobFileError> 
         .clone()
         .with_cutter_sense(cutter_sense.map(ir_cutter_sense), upcut_length)
         .map_err(|err| JobFileError::Invalid { message: err.to_string() })?;
+    let ir =
+        if optional(map, "shape").is_some() { ir.with_shape(ir_shape(shape)).map_err(|err| JobFileError::invalid(err.to_string()))? } else { ir };
     Ok(JobTool { id: parsed.ir().id(), path_tool, ir, shape, speed, assembly })
+}
+
+/// Resolve one physical cutter per tool ID before planning or writing any output.
+fn resolve_ir_shapes(tools: &mut [JobTool], operations: &[Operation]) -> Result<(), JobFileError> {
+    for tool in tools {
+        let mut vbit: Option<(campanion_ir::ToolShape, &str)> = None;
+        for op in operations.iter().filter(|op| op.tool_id() == tool.id() && matches!(op.kind(), OperationKind::Chamfer { .. })) {
+            let shape = campanion_ir::ToolShape::VBit { angle: op.v_angle(), tip_diameter: op.tip_diameter() };
+            if tool.ir.shape().is_some() {
+                return Err(JobFileError::invalid(format!(
+                    "tool {} has an explicit shape conflicting with V-bit geometry in operation `{}`",
+                    tool.id(),
+                    op.name()
+                )));
+            }
+            if let Some((previous, name)) = vbit
+                && previous != shape
+            {
+                return Err(JobFileError::invalid(format!(
+                    "tool {} has conflicting V-bit geometry in operations `{name}` and `{}`; use separate tool IDs",
+                    tool.id(),
+                    op.name()
+                )));
+            }
+            vbit = Some((shape, op.name()));
+        }
+        if tool.diameter().is_some() {
+            let shape = vbit.map(|(shape, _)| shape).unwrap_or_else(|| ir_shape(tool.shape()));
+            tool.ir = tool.ir.clone().with_shape(shape).map_err(|err| JobFileError::invalid(err.to_string()))?;
+        }
+    }
+    Ok(())
+}
+
+fn ir_shape(shape: ToolShape) -> campanion_ir::ToolShape {
+    match shape {
+        ToolShape::Flat => campanion_ir::ToolShape::Flat {},
+        ToolShape::Ball => campanion_ir::ToolShape::Ball {},
+        ToolShape::Bull { corner_radius } => campanion_ir::ToolShape::Bull { corner_radius },
+    }
 }
 
 fn ir_cutter_sense(sense: CutterSense) -> IrCutterSense {
@@ -7240,3 +7283,7 @@ mod tests {
         assert!(invalid_detail(&err).contains("nest cannot be combined with kinematics"), "{err}");
     }
 }
+
+#[cfg(test)]
+#[path = "jobfile/tool_shape_tests.rs"]
+mod tool_shape_tests;
