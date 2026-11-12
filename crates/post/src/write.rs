@@ -3137,7 +3137,10 @@ impl<'a> Writer<'a> {
             return Err(invalid("dwell must be >= 0"));
         }
         let value = if self.post.dwell.unit == "ms" { seconds * 1000.0 } else { seconds };
-        let text = format_fixed(value, self.post.decimals.dwell, self.post.trailing_zeros)?;
+        let mut text = format_fixed(value, self.post.decimals.dwell, self.post.trailing_zeros)?;
+        if self.post.dwell.decimal_seconds && !text.contains('.') {
+            text.push_str(".0");
+        }
         self.emit_line(&format!("G4 {}{text}", self.post.dwell.word))
     }
 

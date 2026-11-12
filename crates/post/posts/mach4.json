@@ -1,0 +1,119 @@
+{
+  "id": "mach4",
+  "name": "Mach4",
+  "description": "Metric three-axis Mach4 mill/router. Explicit incremental IJK, arcs and helices in all planes. Decimal P dwell seconds; integer P milliseconds. No rotary axes or automatic tool-length compensation.",
+  "units": "mm",
+  "line_numbers": {
+    "enabled": false,
+    "start": 10,
+    "step": 10,
+    "prefix": "N"
+  },
+  "decimals": {
+    "linear": 4,
+    "feed": 3,
+    "dwell": 3
+  },
+  "trailing_zeros": false,
+  "header": [
+    "({program_name})",
+    "G21",
+    "G90",
+    "G91.1",
+    "G94",
+    "G17",
+    "G40",
+    "G49",
+    "G80"
+  ],
+  "footer": [
+    "M9"
+  ],
+  "modal_motion": true,
+  "arcs": {
+    "mode": "ijk",
+    "max_sweep_deg": 360,
+    "helix": true
+  },
+  "planes": true,
+  "dwell": {
+    "word": "P",
+    "unit": "s",
+    "decimal_seconds": true
+  },
+  "process": {
+    "spindle": {
+      "on": [
+        "M3 S{speed}"
+      ],
+      "off": [
+        "M5"
+      ]
+    },
+    "torch": {
+      "on": [
+        "M3 S{speed}"
+      ],
+      "off": [
+        "M5"
+      ]
+    },
+    "laser": {
+      "on": [
+        "M3 S{speed}"
+      ],
+      "off": [
+        "M5"
+      ]
+    },
+    "extruder": {
+      "on": [
+        "M3 S{speed}"
+      ],
+      "off": [
+        "M5"
+      ]
+    },
+    "knife": {
+      "on": [
+        "M3 S{speed}"
+      ],
+      "off": [
+        "M5"
+      ]
+    },
+    "other": {
+      "on": [
+        "M3 S{speed}"
+      ],
+      "off": [
+        "M5"
+      ]
+    }
+  },
+  "tool_change": [
+    "T{tool} M6"
+  ],
+  "coolant": {
+    "flood": [
+      "M8"
+    ],
+    "mist": [
+      "M7"
+    ],
+    "off": [
+      "M9"
+    ]
+  },
+  "comments": {
+    "style": "paren"
+  },
+  "program_end": [
+    "M30"
+  ],
+  "max_line_length": 256,
+  "axis_letters": "XYZ",
+  "references": [
+    "Newfangled Solutions, Mach4 Mill Programming Guide v1.1, Build 3775, pp. 15-17, 34-35, 40-42, 50-54, 58, 83-84. https://www.machsupport.com/wp-content/uploads/2014/05/Mill%20GCode%20Programming.pdf"
+  ]
+}

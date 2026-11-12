@@ -191,6 +191,16 @@ pub(crate) struct Arcs {
 pub(crate) struct Dwell {
     pub(crate) word: String,
     pub(crate) unit: String,
+    /// Literal P: a decimal point means seconds, otherwise milliseconds (Mach4).
+    /// Writing always retains a decimal point. Opt-in; requires word=P and unit=s.
+    #[serde(default)]
+    pub(crate) decimal_seconds: bool,
+}
+
+impl Dwell {
+    pub(crate) fn seconds(&self, value: f64, has_decimal: bool) -> f64 {
+        if self.unit == "ms" || (self.decimal_seconds && !has_decimal) { value / 1000.0 } else { value }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]
@@ -756,6 +766,9 @@ impl PostDef {
         self.dwell.word = one_letter("dwell.word", &self.dwell.word)?;
         if !matches!(self.dwell.unit.as_str(), "s" | "ms") {
             return Err(field("dwell.unit", "must be s or ms"));
+        }
+        if self.dwell.decimal_seconds && (self.dwell.unit != "s" || self.dwell.word != "P") {
+            return Err(field("dwell.decimal_seconds", "requires word P and unit s"));
         }
         check_power_scale(self.power_scale)?;
         if !matches!(self.z_mode.as_str(), "keep" | "drop") {

@@ -58,6 +58,7 @@ const LINUXCNC_5AX_JSON: &str = include_str!("../posts/linuxcnc_5ax.json");
 const LINUXCNC_5AX_TCP_JSON: &str = include_str!("../posts/linuxcnc_5ax_tcp.json");
 const GRBL_JSON: &str = include_str!("../posts/grbl.json");
 const MACH3_JSON: &str = include_str!("../posts/mach3.json");
+const MACH4_JSON: &str = include_str!("../posts/mach4.json");
 const FANUC_JSON: &str = include_str!("../posts/fanuc.json");
 const HAAS_JSON: &str = include_str!("../posts/haas.json");
 const HAAS_UMC_JSON: &str = include_str!("../posts/haas_umc.json");
@@ -79,6 +80,7 @@ pub fn builtin_ids() -> &'static [&'static str] {
         "linuxcnc_5ax_tcp",
         "grbl",
         "mach3",
+        "mach4",
         "fanuc",
         "haas",
         "haas_umc",
@@ -102,6 +104,7 @@ pub fn builtin(id: &str) -> Option<PostDef> {
         "linuxcnc_5ax_tcp" => LINUXCNC_5AX_TCP_JSON,
         "grbl" => GRBL_JSON,
         "mach3" => MACH3_JSON,
+        "mach4" => MACH4_JSON,
         "fanuc" => FANUC_JSON,
         "haas" => HAAS_JSON,
         "haas_umc" => HAAS_UMC_JSON,

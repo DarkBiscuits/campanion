@@ -96,6 +96,7 @@ that post. The G-code is read back and compared to the toolpath at the job chord
 | `linuxcnc_router` | LinuxCNC router | - | Millimetre LinuxCNC gantry router. G38.2 tool-length probe, vacuum and dust as M64/M65. No rotary axis. |
 | `grbl` | Grbl | - | Millimetre dialect for Grbl. Absolute moves, IJK arcs and helices, no line numbers, tool changes as comments. No rotary axis. |
 | `mach3` | Mach3 | A, degrees per minute | Millimetre dialect for Mach3. Incremental IJK arcs and helices, dwell P in seconds, no line numbers. A axis with degrees-per-minute feed when the angle changes. |
+| `mach4` | Mach4 | - | Metric three-axis mill/router. Explicit G91.1, IJK arcs and helices, decimal P dwell seconds, no line numbers or automatic tool-length compensation. |
 | `fanuc` | Fanuc | A, inverse time | Millimetre Fanuc mill dialect. Program O0001, sequence numbers, R arcs, helices as lines, dwell P in milliseconds. A axis with inverse-time feed (G93, cancelled by G94) when the angle changes. |
 | `haas` | Haas | A, inverse time | Millimetre Haas mill dialect. Program O00001, sequence numbers, IJK arcs and helices, dwell P in milliseconds. A axis with inverse-time feed (G93, cancelled by G94) when the angle changes. |
 | `plasma` | LinuxCNC plasma | - | Millimetre plasma. Torch on M3 S1 / off M5, pierce dwell from the path, optional THC codes, helices as lines. `process_cycle` `per_cut` keeps every process, including spindle, off during G0. No rotary axis. |
@@ -133,7 +134,7 @@ placeholders, so the same program and post always produce the same bytes. Start 
 - `modal_motion` — when true, a repeated `G0` or `G1` is left off the next line.
 - `arcs` — `mode` is `ijk` (centre offsets `I` `J` `K`), `r` (signed radius), or `lines` (chords within the chord tolerance). `max_sweep_deg` splits a longer arc (greater than 0, at most 360). `helix` writes a helix as arcs when true, and as chords when false.
 - `planes` — when true, the post can change plane. When false, an arc has to stay in the header plane.
-- `dwell` — `word` (one letter) and `unit` (`s` or `ms`).
+- `dwell` — `word` (one letter) and `unit` (`s` or `ms`). Optional `decimal_seconds: true` requires `P` and `s`: always writes decimal seconds and reads integer P as milliseconds (Mach4). See [Mach4 setup and dwell rules](crates/post/README.md#mach4).
 - `process` — map from a process name (`spindle`, `torch`, `laser`, `extruder`, `knife`, `other`) to `{ "on": [lines], "off": [lines] }`. Placeholders: `{speed}`, `{power}`, `{program_name}`, `{date-free!}`.
 - `tool_change` — lines for a tool change. Placeholder: `{tool}`.
 - `coolant` — `flood`, `mist`, and `off`, each a list of lines.

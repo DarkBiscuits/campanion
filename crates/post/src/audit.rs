@@ -544,6 +544,19 @@ impl<'a> Parser<'a> {
             self.length = LengthOffset::Active(h);
         }
         if saw_dwell {
+            if self.post.dwell.decimal_seconds {
+                if words.iter().filter(|word| word.letter == 'G').count() != 1 {
+                    return Err(fail(line_no, "dwell must be the only G code in its block"));
+                }
+                // P was checked for finiteness, sign and duplication above. The audit
+                // validates the block; read_back reports its decimal-sensitive duration.
+                if p_value.is_none() {
+                    return Err(fail(line_no, "dwell is missing its value"));
+                }
+                if i.is_some() || j.is_some() || k.is_some() || r.is_some() {
+                    return Err(fail(line_no, "literal-P dwell does not accept arc or cycle words"));
+                }
+            }
             if block_motion.is_some() || x.is_some() || y.is_some() || z.is_some() || saw_rotary {
                 return Err(fail(line_no, "dwell cannot share a block with motion"));
             }
@@ -1161,7 +1174,7 @@ mod tests {
         let path = ClPath::try_new(Some("outer".into()), Some(1), CompensationMode::Off, feeds, None, Vec::new(), blocks).expect("path");
         let program = Program::try_new(Some("plate".into()), vec![tool], None, vec![path], Vec::new(), Vec::new(), None).expect("program");
         let options = PostOptions { arc_tolerance: 0.05 };
-        for id in ["linuxcnc", "linuxcnc_router", "grbl", "mach3", "fanuc", "haas", "plasma", "grbl_laser"] {
+        for id in ["linuxcnc", "linuxcnc_router", "grbl", "mach3", "mach4", "fanuc", "haas", "plasma", "grbl_laser"] {
             let post = builtin(id).expect(id);
             let text = post_program(&program, &post, &options).unwrap_or_else(|err| panic!("{id}: {err}"));
             assert!(!text.contains("-0"), "{id}: {text}");

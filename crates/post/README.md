@@ -48,9 +48,35 @@ A Probe event with a contact pose and a feed is one `G38.2` block: the three axi
 
 `audit` treats the probe block as a non-motion and accepts `M64`/`M65` only when `digital_out` is set and `P` is one of the declared pins. `G53` handling is unchanged. This output has not been proven on a machine.
 
+## Mach4
+
+`mach4` is a metric three-axis mill/router post, based on the public
+[Mach4 Mill Programming Guide v1.1, Build 3775](https://www.machsupport.com/wp-content/uploads/2014/05/Mill%20GCode%20Programming.pdf).
+Its header declares `G21 G90 G91.1 G94 G17 G40 G49 G80` on separate blocks: millimetres,
+absolute endpoints, incremental IJK centres, feed per minute, XY plane, and cancelled cutter
+compensation, tool-length offsets and canned cycles. It writes full circles and helices in
+XY/ZX/YZ, standard `T… M6`, `M3`/`M5`, `M7`/`M8`/`M9`, and ends with `M30`.
+There are no line numbers, machine parking coordinates, rotary/five-axis or lathe support,
+probing macros, automatic tool measurement or accessory mappings.
+
+The operator must establish the work offset and correct tool-tip Z for each tool with
+length compensation cancelled (`G49`). `T… M6` uses the machine's configured tool-change
+behavior; this post does not emit `G43 H…` or choose a tool-measurement macro. Review that
+setup before use. Software read-back and audit do not establish controller or machine acceptance.
+
+Mach4 distinguishes literal dwell spelling (manual p. 17): `G4 P2` means 0.002 seconds,
+while `G4 P2.0` means 2 seconds. Its dwell must be the only G code in the block.
+`dwell: { "word": "P", "unit": "s", "decimal_seconds": true }` opts into these rules for
+built-in or custom posts. The writer keeps a decimal point even with `trailing_zeros: false`
+or `decimals.dwell: 0`; `read_back` returns the actual seconds for integer and decimal P.
+The mill audit validates the literal-P block but does not report elapsed dwell time.
+X/U dwell variants and variable expressions are outside this literal-P scope.
+The option defaults to false, preserving existing `s` and `ms` posts. It requires `word: P`
+and `unit: s`. Dimensional `decimal_point` does not control dwell formatting.
+
 ## Modal audit
 
-`read_back`, `audit` and `audit_five` accept `G91.1` as an explicit declaration of incremental `I`/`J`/`K` arc centres, including in a custom post header or on a motion block. It does not change the `G90` positioning mode. `G90.1` is rejected with a specific diagnostic because absolute arc centres are not supported. Built-in post headers are unchanged.
+`read_back`, `audit` and `audit_five` accept `G91.1` as an explicit declaration of incremental `I`/`J`/`K` arc centres, including in a custom post header or on a motion block. It does not change the `G90` positioning mode. `G90.1` is rejected with a specific diagnostic because absolute arc centres are not supported. Existing built-in post headers are unchanged; `mach4` declares `G91.1` explicitly.
 
 `audit` accepts `G53` machine-coordinate moves, including retracts in custom tool-change templates. They are excluded from part-frame motions and preserve the part position, motion mode and plane, matching `read_back` and the existing five-axis audit. This replay does not establish a machine-to-work coordinate transform or verify the physical retract path.
 

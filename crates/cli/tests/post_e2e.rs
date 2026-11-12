@@ -59,7 +59,7 @@ fn first_diff(left: &str, right: &str) -> String {
 fn sample_job_posts_with_each_builtin() -> Result<(), String> {
     let root = workspace_root()?;
     let job = sample_job(&root)?;
-    for id in ["linuxcnc", "grbl"] {
+    for id in ["linuxcnc", "grbl", "mach4"] {
         let out = temp_path(&format!("campanion-post-e2e-{id}.nc"));
         let out_arg = path_arg(&out)?;
         run_ok(&["run", &job, "-o", &out_arg, "--post", id])?;
@@ -79,6 +79,14 @@ fn sample_job_posts_with_each_builtin() -> Result<(), String> {
             "grbl" => {
                 if !posted.starts_with("(sample.job)\n") || !posted.ends_with("M30\n") || posted.lines().any(|line| line.starts_with('N')) {
                     return Err(format!("{id}: unexpected grbl program\n{posted}"));
+                }
+            }
+            "mach4" => {
+                if !posted.starts_with("(sample.job)\nG21\nG90\nG91.1\nG94\nG17\nG40\nG49\nG80\n")
+                    || !posted.ends_with("M30\n")
+                    || posted.lines().any(|line| line.starts_with('N'))
+                {
+                    return Err(format!("{id}: unexpected Mach4 program\n{posted}"));
                 }
             }
             _ => return Err(format!("untested builtin {id}")),
@@ -159,6 +167,7 @@ fn posts_lists_every_builtin() -> Result<(), String> {
             "linuxcnc_5ax_tcp",
             "grbl",
             "mach3",
+            "mach4",
             "fanuc",
             "haas",
             "haas_umc",
@@ -189,7 +198,7 @@ fn post_on_committed_ir_matches_run() -> Result<(), String> {
     // before it writes IR, so this posts the IR that same run just wrote.
     let root = workspace_root()?;
     let job = sample_job(&root)?;
-    for id in ["linuxcnc", "grbl"] {
+    for id in ["linuxcnc", "grbl", "mach4"] {
         let from_run_path = temp_path(&format!("campanion-post-match-run-{id}.nc"));
         let ir_path = temp_path(&format!("campanion-post-match-{id}.ir.json"));
         let from_post_path = temp_path(&format!("campanion-post-match-post-{id}.nc"));
