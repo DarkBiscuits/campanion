@@ -136,6 +136,7 @@ unique within that operation. The same layer may appear on two operations.
 | `tool_id` | yes | `id` of a tool in this file. |
 | `speed` | no | Spindle speed in rpm: positive, finite, and at most 100000. Not scaled by `units`. When set, it overrides `tools[].speed` for this operation. Omitted, the tool's speed is used. See [Spindle speed](#spindle-speed) and [Tool changes](#tool-changes). |
 | `depth` | yes, except chamfer, surface, rough, waterline and rotary finish | Positive distance downward, in `units`. Not an absolute Z. On a profile, pocket, drill, engrave or face this is below the stock surface. On a wrap it is below the cylinder surface. A chamfer rejects `depth`; the tip depth follows from the geometry. A surface, a rough, a waterline or a rotary finish rejects `depth`. |
+| `start_depth` | pocket only | Already-cleared distance below the stock surface, in `units`, default 0. Must be at least 0 and less than `depth`. Depth passes begin one `step_down` below it, ending at the original `depth`. Applies to pocket area and wall-finishing passes. Rejected on every other operation. See [Pocket start depth](#pocket-start-depth). |
 | `step_down` | yes, except chamfer, surface and rotary finish | Positive maximum thickness of one pass, in `units`. The last pass of a 2D operation, including a wrap, stops at `depth` and is not deeper. A chamfer rejects `step_down`. A surface or a rotary finish rejects `step_down`. A rough or a waterline requires it: the spacing between Z levels. On a drill it is the peck depth: when it is less than `depth` the drill pecks, and otherwise the drill feeds to depth in one move. A drill with `onion_skin` pecks even when `step_down` is at least `depth`, so the skin is its own last peck. |
 | `onion_skin` | no | Positive length in `units`, strictly less than `depth`. On a profile, pocket, face, engrave, drill or wrap, earlier depth passes stop this far short of `depth`, and the last pass cuts that skin with the same entry as the other passes. Omitted, the depth plan is unchanged. Rejected on a chamfer, a surface, a rough, a waterline and a rotary finish. Not proven on a machine. |
 | `dwell` | drill only | Seconds to pause at the bottom of a drill, from 0 to 3600 inclusive. Not scaled by `units`. Rejected on every other kind. Omitted, the drill does not pause. |
@@ -171,7 +172,9 @@ unique within that operation. The same layer may appear on two operations.
 
 `depth` and `step_down` must be a legal `campanion-path` depth plan: positive, at most 1e6 mm,
 and at most 1024 passes. Five millimetres at a two millimetre step is three passes (2, 4, 5).
-When `finish.step_down` is set, it must satisfy the same rule against `depth`.
+When `finish.step_down` is set, it must satisfy the same rule against `depth`. For a pocket
+with `start_depth`, both pass limits apply to the remaining interval `depth - start_depth`;
+the absolute final depth and step-down are still capped at 1e6 mm.
 
 `onion_skin`, when set, is a positive length strictly less than `depth`. Roughing passes are the
 plan of `depth - onion_skin`, and one further pass cuts the skin at `depth` with the same entry.
@@ -182,6 +185,36 @@ with the same skin. Omitting the field leaves the depth plan unchanged. `campani
 that every earlier cut stays at least `onion_skin` above the floor and that the last pass
 reaches it. A roughing link that leaves floor stock and has no finish pass stays out of the
 skin and is not required to reach the sheet floor. This output has not been proven on a machine.
+
+### Pocket start depth
+
+A `pocket` operation may set `start_depth` to continue cutting an area already cleared by a
+previous operation. It is a non-negative distance below the original stock surface, in job
+`units`; omitted, it is 0. `depth` remains the final distance below that same surface.
+For example, `"start_depth": 3, "depth": 8, "step_down": 2` cuts at Z -5, -7 and -8 mm
+when the stock surface is Z0. It does not repeat passes at Z -2 or -4. In an indexed or
+tilted pocket, the depths are measured in the operation's local cutting frame.
+
+The caller must ensure the selected pocket area has already been cleared to `start_depth`.
+This field does not inspect previous operations or infer remaining stock. Clearance and
+retract heights are unchanged: the tool still rapids only at those safe heights, and feeds
+the plunge, ramp or helix to the first cut. A ramp or helix still covers the full drop from
+the retract height; an entry that does not fit is rejected. No rapid down to `start_depth`
+is added.
+
+Floor stock and an onion skin remain measured upward from the original final floor.
+`start_depth` must be strictly less than both `depth - stock_to_leave.floor` and
+`depth - onion_skin` when those allowances are set. A start at or below either roughing
+stop is rejected, including when `finish` is set; finishing-only continuation is outside
+this scope. Earlier passes keep the skin, and the last pass reaches the existing target.
+An optional floor finish still cuts at `-depth`. Wall-finishing passes begin below
+`start_depth` using `finish.step_down`, so they also skip the already-cleared interval.
+Wall allowance and finishing geometry are unchanged.
+
+`start_depth` is accepted only on `pocket`, including when its value is 0. Other operation
+kinds retain their existing depth behavior. See the synthetic
+[pocket continuation fixture](../crates/cli/tests/fixtures/pocket_start.job.json).
+Software read-back and verification do not establish physical machining acceptance.
 
 ### Tool changes
 
