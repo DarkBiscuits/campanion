@@ -68,6 +68,16 @@ const MILLS: &[Mill] = &[
         decimal_point: false,
         length: LengthKind::Cancelled,
     },
+    Mill {
+        id: "mach4",
+        per_cut: false,
+        laser: false,
+        drop_z: false,
+        rapid_z: true,
+        numbered: false,
+        decimal_point: false,
+        length: LengthKind::Cancelled,
+    },
     Mill { id: "fanuc", per_cut: false, laser: false, drop_z: false, rapid_z: true, numbered: true, decimal_point: true, length: LengthKind::Active },
     Mill { id: "haas", per_cut: false, laser: false, drop_z: false, rapid_z: true, numbered: true, decimal_point: true, length: LengthKind::Active },
     Mill {

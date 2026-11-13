@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- A built-in `mach4` three-axis mill/router post writes metric output with incremental IJK (`G91.1`) and `M9`/`M30` at the end. The opt-in `dwell.decimal_seconds` setting makes read-back treat an integer `G4 P` as milliseconds and a decimal `G4 P` as seconds, matching Mach4, and the writer always emits a decimal P so Mach4 reads seconds. Existing posts keep their dwell behavior and golden output. This output has not been proven on a machine.
+
 ## 0.12.0 — 2026-11-12
 
 Plasma improvements: optional G41/G42 from IR controller compensation, job-file lead-ins and lead-outs with the small-hole rule, automatic contour side and climb or conventional direction, and a narrower-than-kerf refusal plus a warning when a rapid crosses a freed slug (#163–#166). This output has not been proven on a machine.

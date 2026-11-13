@@ -140,6 +140,7 @@ fn builtins_load_and_match_ids() {
             "linuxcnc_5ax_tcp",
             "grbl",
             "mach3",
+            "mach4",
             "fanuc",
             "haas",
             "haas_umc",
@@ -1674,7 +1675,7 @@ fn a_positive_feed_that_rounds_to_zero_is_rejected() {
         ClBlock::Motion(ClMotion::Linear { to: pose(1.0, 0.0, 1.0), feed: 0.00004, role: MoveRole::Cut, power: None }),
     ];
     let program = program(blocks);
-    for id in ["linuxcnc", "linuxcnc_router", "grbl", "mach3", "fanuc", "haas", "plasma", "grbl_laser"] {
+    for id in ["linuxcnc", "linuxcnc_router", "grbl", "mach3", "mach4", "fanuc", "haas", "plasma", "grbl_laser"] {
         let post = builtin(id).expect(id);
         let err = post_program(&program, &post, &options()).expect_err(id);
         assert!(err.to_string().contains("feed rounds to zero"), "{id}: {err}");
