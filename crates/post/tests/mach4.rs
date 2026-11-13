@@ -55,7 +55,7 @@ fn startup_tool_change_process_and_shutdown() {
         ClBlock::Event(Event::ProcessOn { process: ProcessKind::Spindle, params: ProcessParams::new().speed(Some(12000.0)).expect("speed") }),
         ClBlock::Event(Event::Coolant { mode: CoolantMode::Flood }),
         ClBlock::Event(Event::Coolant { mode: CoolantMode::Mist }),
-        ClBlock::Motion(ClMotion::Linear { to: pose([10.0, 0.0, 5.0]), feed: 100.0, role: MoveRole::Cut }),
+        ClBlock::Motion(ClMotion::Linear { to: pose([10.0, 0.0, 5.0]), feed: 100.0, role: MoveRole::Cut, power: None }),
         // Intentionally leave the spindle and coolant on: program shutdown must stop both.
     ]);
     let text = roundtrip(&p);
@@ -188,6 +188,7 @@ fn arcs_circles_and_helices_use_incremental_ijk_in_every_plane() {
                             sense,
                             feed: 100.0,
                             role: MoveRole::Cut,
+                            power: None,
                         }
                     } else {
                         ClMotion::Helix {
@@ -198,6 +199,7 @@ fn arcs_circles_and_helices_use_incremental_ijk_in_every_plane() {
                             sweep: if full { std::f64::consts::TAU } else { std::f64::consts::FRAC_PI_2 },
                             feed: 100.0,
                             role: MoveRole::Cut,
+                            power: None,
                         }
                     };
                     let p = program(vec![rapid(map(12.0, 20.0, 3.0)), ClBlock::Motion(motion)]);
