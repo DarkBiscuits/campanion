@@ -2,11 +2,11 @@
 
 ## Goal
 An open, machine-neutral CAM engine in Rust that turns geometry into good toolpaths, starting with
-2D and working up to complex machines. It is a companion to SolidCraft now and is meant to merge
-into it later.
+2D and working up to complex machines. CAMpanion is a standalone application. It can import STEP
+parts through SolidCraft's `solidcraft-cli`.
 
 Direction (2026-10-21):
-- Rust, following SolidCraft's source rules (see `AGENTS.md`), so a merge is straightforward.
+- Rust, following SolidCraft's source rules (see `AGENTS.md`).
 - Not tied to one machine or process yet. Mill, router, plasma, laser, waterjet, drag knife and
   additive are all "processes" on the same engine.
 - Get path processing right first. Start with 2D, then 2.5D, 3-axis, 4/5-axis, turning and
@@ -423,3 +423,4 @@ first. If upstream lands a CAM core, we contribute to it and keep only what it l
 - 2026-11-12: v0.11.0 is laser raster: per-move IR power, post S words including S0 overscan, and laser_raster jobs (#159-#161). Plasma improvements are next.
 - 2026-11-12: v0.12.0 is plasma improvements: optional G41/G42, job-file leads and the small-hole rule, automatic contour side and direction, and a narrower-than-kerf refusal plus a freed-slug rapid warning (#163-#166).
 - 2026-11-12: v0.12.1 is a Mach4 post and pocket start depth from DarkBiscuits (#156, #157), omitted laser power defaulting to S0 instead of full scale (#168), and a profile retract lift so tabs and lead-in/out none work on non-square shapes (#169).
+- 2026-11-13: v0.12.2 is `campanion audit` for finished G-code, optional job-file tool names, a shared closed-profile start on both job-file and profile-document routes (#172), and docs that treat CAMpanion as a standalone application. Waterjet straight cuts are next.
