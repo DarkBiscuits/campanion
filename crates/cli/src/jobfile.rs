@@ -67,6 +67,11 @@
 //! cutter-location Z. Entry is a plunge.
 //!
 //! A tool may set `shape`: `"flat"` (the default), `"ball"`, or `{"bull": corner_radius}`.
+//! A pocket may set `start_depth`, a non-negative distance below stock Z0, less than `depth`.
+//! Area and wall-finishing passes cover only the remaining interval. The caller asserts that
+//! the pocket was already cleared above it. Retract heights and entry-angle limits stay unchanged.
+//! Every other operation rejects the field. See `docs/job-file.md`.
+//!
 //! A shape other than flat is only used by a surface, rough, waterline or rotary finish operation.
 //! Two-dimensional operations keep the flat diameter offset.
 //! A tool may set `speed`, a spindle speed in rpm: positive, finite, and at most 100000. An
@@ -926,6 +931,7 @@ impl Finish {
 /// drill pecks, and otherwise the drill feeds to depth in one move.
 /// [`Self::onion_skin`] is the thickness left until the last depth pass. `None` means the file
 /// omitted it, and the depth plan is unchanged.
+/// [`Self::start_depth`] is an already-cleared pocket depth; the other kinds store 0.
 /// [`Self::index_deg`] is the machine A/B angle for this operation, in degrees. `None` means the
 /// file omitted it. A job with a rotary setup then runs the operation at 0°. A wrap rejects
 /// `index_deg`. [`Self::cylinder_diameter`] is set only on a wrap. [`Self::u_offset`] and
@@ -941,6 +947,8 @@ pub struct Operation {
     layers: Vec<String>,
     tool_id: u32,
     depth: f64,
+    /// Already-cleared depth below the stock surface. Zero except on pockets.
+    start_depth: f64,
     step_down: f64,
     /// Thickness left until the last depth pass, in millimetres. `None` when the file omits `onion_skin`.
     onion_skin: Option<f64>,
@@ -1111,6 +1119,12 @@ impl Operation {
     /// `width / tan(v_angle / 2) + tip_clearance`.
     pub fn depth(&self) -> f64 {
         self.depth
+    }
+
+    /// Already-cleared pocket depth below the stock surface, in millimetres.
+    /// Zero when omitted. The final depth remains measured from the stock surface.
+    pub fn start_depth(&self) -> f64 {
+        self.start_depth
     }
 
     /// Maximum thickness of one depth pass, in millimetres.
@@ -2423,6 +2437,7 @@ fn parse_operation(value: &Value, scale: f64, tools: &[JobTool]) -> Result<Opera
             "side",
             "tool_id",
             "depth",
+            "start_depth",
             "dwell",
             "step_down",
             "onion_skin",
@@ -2478,6 +2493,9 @@ fn parse_operation(value: &Value, scale: f64, tools: &[JobTool]) -> Result<Opera
     let index_deg = parse_index_deg(optional(map, "index_deg"))?;
     let speed = parse_rpm(optional(map, "speed"))?;
     let kind = parse_kind(map)?;
+    if optional(map, "start_depth").is_some() && !matches!(kind, OperationKind::Pocket) {
+        return Err(op_invalid(&name, "start_depth is only valid on a pocket"));
+    }
     if optional(map, "tabs").is_some() && !matches!(kind, OperationKind::Profile { .. }) {
         return Err(op_invalid(&name, "tabs is only valid on a profile"));
     }
@@ -2555,12 +2573,15 @@ fn parse_operation(value: &Value, scale: f64, tools: &[JobTool]) -> Result<Opera
     let tool_id = as_u32(require(map, "tool_id").map_err(from_cli)?, "tool_id").map_err(from_cli)?;
     let tool = tools.iter().find(|tool| tool.id() == tool_id).ok_or_else(|| JobFileError::invalid(format!("unknown tool {tool_id}")))?;
     let chamfer = parse_chamfer(map, kind, tool, scale)?;
-    let (depth, step_down) = parse_depth_and_step(map, kind, scale, chamfer.tip_depth)?;
+    let (depth, step_down, start_depth) = parse_depth_and_step(map, kind, scale, chamfer.tip_depth)?;
     let stepover = parse_stepover(optional(map, "stepover"), kind, tool, scale)?;
     let face_angle = parse_face_angle(optional(map, "angle_deg"), kind)?;
     let margin = parse_margin(optional(map, "margin"), kind, scale)?;
     let stock_to_leave = parse_stock_to_leave(optional(map, "stock_to_leave"), kind, depth, scale)?;
-    let finish = parse_finish(optional(map, "finish"), kind, depth, scale)?;
+    if start_depth > 0.0 && start_depth >= depth - stock_to_leave.floor() {
+        return Err(JobFileError::invalid("start_depth must be less than depth - stock_to_leave floor"));
+    }
+    let finish = parse_finish(optional(map, "finish"), kind, depth, start_depth, scale)?;
     let entry = parse_entry(optional(map, "entry"), scale)?;
     let feeds = parse_operation_feeds(require(map, "feeds").map_err(from_cli)?, scale)?;
     let params = parse_timing(map, scale)?;
@@ -2575,13 +2596,14 @@ fn parse_operation(value: &Value, scale: f64, tools: &[JobTool]) -> Result<Opera
     if !matches!(compensation, Compensation::Computed) && stock_to_leave.wall() != 0.0 {
         return Err(op_invalid(&name, "controller compensation cannot be combined with stock_to_leave.wall"));
     }
-    let onion_skin = parse_onion_skin(map, kind, depth, step_down, finish.as_ref(), scale)?;
+    let onion_skin = parse_onion_skin(map, kind, depth, step_down, finish.as_ref(), start_depth, scale)?;
     Ok(Operation {
         name,
         kind,
         layers,
         tool_id,
         depth,
+        start_depth,
         step_down,
         onion_skin,
         dwell,
@@ -2715,6 +2737,7 @@ fn finish_surface(name: String, map: &Map<String, Value>, scale: f64, tools: &[J
         layers: Vec::new(),
         tool_id,
         depth: 0.0,
+        start_depth: 0.0,
         step_down: 0.0,
         onion_skin: None,
         dwell: None,
@@ -2958,6 +2981,7 @@ fn finish_rough(name: String, map: &Map<String, Value>, scale: f64, tools: &[Job
         layers: Vec::new(),
         tool_id,
         depth: 0.0,
+        start_depth: 0.0,
         step_down,
         onion_skin: None,
         dwell: None,
@@ -3088,6 +3112,7 @@ fn finish_waterline(name: String, map: &Map<String, Value>, scale: f64, tools: &
         layers: Vec::new(),
         tool_id,
         depth: 0.0,
+        start_depth: 0.0,
         step_down,
         onion_skin: None,
         dwell: None,
@@ -3167,8 +3192,8 @@ fn finish_wrap(name: String, map: &Map<String, Value>, scale: f64, tools: &[JobT
     if !tools.iter().any(|tool| tool.id() == tool_id) {
         return Err(JobFileError::invalid(format!("unknown tool {tool_id}")));
     }
-    let (depth, step_down) = parse_depth_and_step(map, OperationKind::Wrap, scale, None)?;
-    let onion_skin = parse_onion_skin(map, OperationKind::Wrap, depth, step_down, None, scale)?;
+    let (depth, step_down, _) = parse_depth_and_step(map, OperationKind::Wrap, scale, None)?;
+    let onion_skin = parse_onion_skin(map, OperationKind::Wrap, depth, step_down, None, 0.0, scale)?;
     let Some(diameter_value) = optional(map, "diameter") else {
         return Err(JobFileError::invalid("wrap needs a diameter"));
     };
@@ -3189,6 +3214,7 @@ fn finish_wrap(name: String, map: &Map<String, Value>, scale: f64, tools: &[JobT
         layers,
         tool_id,
         depth,
+        start_depth: 0.0,
         step_down,
         onion_skin,
         dwell: None,
@@ -3316,6 +3342,7 @@ fn finish_rotary(name: String, map: &Map<String, Value>, scale: f64, tools: &[Jo
         layers: Vec::new(),
         tool_id,
         depth: 0.0,
+        start_depth: 0.0,
         step_down: 0.0,
         onion_skin: None,
         dwell: None,
@@ -3357,6 +3384,7 @@ fn reject_laser_raster_foreign_keys(map: &Map<String, Value>) -> Result<(), JobF
     for key in [
         "layers",
         "depth",
+        "start_depth",
         "step_down",
         "onion_skin",
         "stepover",
@@ -3443,6 +3471,7 @@ fn finish_laser_raster(name: String, map: &Map<String, Value>, scale: f64, tools
         layers: Vec::new(),
         tool_id,
         depth: 0.0,
+        start_depth: 0.0,
         step_down: 0.0,
         onion_skin: None,
         dwell: None,
@@ -3692,19 +3721,29 @@ fn reject_chamfer_cut_keys(map: &Map<String, Value>, kind: OperationKind) -> Res
 
 /// File `depth` and `step_down` for every kind except chamfer. A chamfer stores the derived
 /// tip depth as a single pass. [`reject_chamfer_cut_keys`] has already rejected those keys.
-fn parse_depth_and_step(map: &Map<String, Value>, kind: OperationKind, scale: f64, tip_depth: Option<f64>) -> Result<(f64, f64), JobFileError> {
+fn parse_depth_and_step(map: &Map<String, Value>, kind: OperationKind, scale: f64, tip_depth: Option<f64>) -> Result<(f64, f64, f64), JobFileError> {
     if matches!(kind, OperationKind::Chamfer { .. }) {
         reject_chamfer_cut_keys(map, kind)?;
         let Some(depth) = tip_depth else {
             return Err(JobFileError::invalid("chamfer tip depth is missing"));
         };
         check_depth(depth, depth)?;
-        return Ok((depth, depth));
+        return Ok((depth, depth, 0.0));
     }
     let depth = scale_f64(require(map, "depth").map_err(from_cli)?, scale, "depth")?;
     let step_down = scale_f64(require(map, "step_down").map_err(from_cli)?, scale, "step_down")?;
-    check_depth(depth, step_down)?;
-    Ok((depth, step_down))
+    // Check the absolute depth bound independently; the pass limit applies only to
+    // the remaining pocket interval, not to material the caller says is already clear.
+    check_depth(depth, depth)?;
+    let start_depth = match optional(map, "start_depth") {
+        Some(value) => non_negative_length(value, scale, "start_depth")?,
+        None => 0.0,
+    };
+    if start_depth >= depth {
+        return Err(JobFileError::invalid("start_depth must be less than depth"));
+    }
+    check_depth(depth - start_depth, step_down)?;
+    Ok((depth, step_down, start_depth))
 }
 
 fn positive_length(value: &Value, scale: f64, what: &str) -> Result<f64, JobFileError> {
@@ -3835,7 +3874,7 @@ fn non_negative_length(value: &Value, scale: f64, what: &str) -> Result<f64, Job
     Ok(length)
 }
 
-fn parse_finish(value: Option<&Value>, kind: OperationKind, depth: f64, scale: f64) -> Result<Option<Finish>, JobFileError> {
+fn parse_finish(value: Option<&Value>, kind: OperationKind, depth: f64, start_depth: f64, scale: f64) -> Result<Option<Finish>, JobFileError> {
     let Some(value) = value else {
         return Ok(None);
     };
@@ -3853,7 +3892,7 @@ fn parse_finish(value: Option<&Value>, kind: OperationKind, depth: f64, scale: f
             if !(step_down > 0.0) {
                 return Err(JobFileError::invalid("finish step_down must be positive"));
             }
-            check_depth(depth, step_down)?;
+            check_depth(depth - start_depth, step_down)?;
             step_down
         }
         None => depth,
@@ -4205,6 +4244,7 @@ fn parse_onion_skin(
     depth: f64,
     step_down: f64,
     finish: Option<&Finish>,
+    start_depth: f64,
     scale: f64,
 ) -> Result<Option<f64>, JobFileError> {
     let Some(value) = optional(map, "onion_skin") else {
@@ -4225,9 +4265,12 @@ fn parse_onion_skin(
     if skin >= depth {
         return Err(JobFileError::invalid("onion_skin must be less than depth"));
     }
-    check_onion_plan(depth, step_down, skin)?;
+    if skin >= depth - start_depth {
+        return Err(JobFileError::invalid("start_depth must be less than depth - onion_skin"));
+    }
+    check_onion_plan(depth - start_depth, step_down, skin)?;
     if let Some(finish) = finish {
-        check_onion_plan(depth, finish.step_down(), skin)?;
+        check_onion_plan(depth - start_depth, finish.step_down(), skin)?;
     }
     Ok(Some(skin))
 }
@@ -4563,6 +4606,73 @@ mod tests {
         format!(
             r#"{{"format":"campanion-job/1","source":{{"path":"{source_path}","hash":"{EMPTY_HASH}"}},"units":"mm","tools":{tools},"operations":{ops}}}"#
         )
+    }
+
+    fn start_depth_text(extra: &str) -> String {
+        envelope(
+            "part.svg",
+            r#"[{"id":1,"diameter":6}]"#,
+            &format!(
+                r#"[{{"name":"continue","type":"pocket","layers":["PART"],"tool_id":1,"depth":8,"step_down":2,"feeds":{{"cut":1000}}{extra}}}]"#
+            ),
+        )
+    }
+
+    #[test]
+    fn pocket_start_depth_defaults_and_scales_in_job_units() {
+        let default = load(&write_job("start-default", &start_depth_text(""))).expect("default");
+        assert_eq!(default.operations()[0].start_depth(), 0.0);
+        let inch = start_depth_text(r#", "start_depth":3"#).replace(r#""units":"mm""#, r#""units":"inch""#);
+        let inch = load(&write_job("start-inch", &inch)).expect("inch");
+        near(inch.operations()[0].start_depth(), 3.0 * 25.4);
+        near(inch.operations()[0].depth(), 8.0 * 25.4);
+    }
+
+    #[test]
+    fn pocket_start_depth_rejects_invalid_intervals_and_allowance_conflicts() {
+        for (extra, needle) in [
+            (r#", "start_depth":-1"#, "start_depth must be at least 0"),
+            (r#", "start_depth":8"#, "start_depth must be less than depth"),
+            (r#", "start_depth":9"#, "start_depth must be less than depth"),
+            (r#", "start_depth":"3""#, "start_depth"),
+            (r#", "start_depth":1e300"#, "start_depth"),
+            (r#", "start_depth":7,"stock_to_leave":{"floor":1}"#, "stock_to_leave floor"),
+            (r#", "start_depth":7.5,"stock_to_leave":{"floor":1},"finish":{}"#, "stock_to_leave floor"),
+            (r#", "start_depth":7,"onion_skin":1"#, "depth - onion_skin"),
+            (r#", "start_depth":7.5,"onion_skin":1,"finish":{}"#, "depth - onion_skin"),
+        ] {
+            let err = load(&write_job("start-invalid", &start_depth_text(extra))).expect_err("invalid pocket");
+            assert!(err.to_string().contains(needle), "{extra}: {err}");
+        }
+        for hostile in ["NaN", "Infinity", "1e9999"] {
+            assert!(load(&write_job("start-hostile", &start_depth_text(&format!(",\"start_depth\":{hostile}")))).is_err());
+        }
+    }
+
+    #[test]
+    fn start_depth_is_rejected_on_every_other_operation_even_when_zero() {
+        for kind in ["profile", "drill", "engrave", "face", "chamfer", "surface", "rough", "waterline", "wrap", "rotary_finish", "laser_raster"] {
+            let mut text = start_depth_text(r#", "start_depth":0"#).replace(r#""type":"pocket""#, &format!("\"type\":\"{kind}\""));
+            if matches!(kind, "profile" | "chamfer") {
+                text = text.replace(r#""layers""#, r#""side":"outside","layers""#);
+            }
+            let err = load(&write_job("start-kind", &text)).expect_err("unsupported start_depth");
+            assert!(err.to_string().contains("start_depth is only valid on a pocket"), "{kind}: {err}");
+        }
+    }
+
+    #[test]
+    fn pocket_start_depth_pass_limits_apply_to_remaining_material_and_finish() {
+        let text = start_depth_text(r#", "start_depth":1999,"finish":{"step_down":0.001}"#)
+            .replace(r#""depth":8"#, r#""depth":2000"#)
+            .replace(r#""step_down":2"#, r#""step_down":0.001"#);
+        load(&write_job("start-limit-ok", &text)).expect("1000 remaining passes");
+        for text in [text.replace("1999", "1998"), text.replace("0.001", "0.0001"), text.replace("2000", "1000001")] {
+            let err = load(&write_job("start-limit-bad", &text)).expect_err("bounded passes/depth");
+            assert!(err.to_string().contains("too many depth passes") || err.to_string().contains("1000000"), "{err}");
+        }
+        let text = start_depth_text(r#", "start_depth":3,"onion_skin":1,"finish":{"step_down":0.001}"#);
+        assert!(load(&write_job("start-finish-limit", &text)).is_err());
     }
 
     #[test]

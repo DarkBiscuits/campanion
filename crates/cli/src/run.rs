@@ -1298,7 +1298,7 @@ fn depth_with(cut: &Cut<'_>, contour: &Contour, total: f64, step_down: f64) -> R
     if !matches!(lead_in, Lead::None) || !matches!(lead_out, Lead::None) {
         return depth_with_leads(cut, contour, total, step_down, lead_in, lead_out);
     }
-    let mut plan = apply_onion(DepthPlan::new(0.0, total, step_down, cut.op.entry()), cut.op, total);
+    let mut plan = operation_depth_plan(cut.op, total, step_down, cut.op.entry());
     // Linking rapids to the retract height and the entry feed starts there. A ramp or helix
     // planned from the stock surface would be posted from that higher Z over a length sized
     // for the stock step, and the first descent would be steeper than angle_deg. Size the
@@ -1310,7 +1310,7 @@ fn depth_with(cut: &Cut<'_>, contour: &Contour, total: f64, step_down: f64) -> R
     // through it.
     if matches!(cut.op.entry(), DepthEntry::Ramp { .. } | DepthEntry::Helix { .. }) {
         let retract = retract_z(cut.job);
-        if retract > 0.0 {
+        if retract > plan.stock_z() {
             plan = plan.entry_start(retract);
         }
     }
@@ -1697,12 +1697,21 @@ fn roughing_depth(op: &Operation, target: f64) -> f64 {
     }
 }
 
+/// Reuse the bounded depth planner below the already-cleared pocket surface. Other
+/// operations store start_depth=0 and keep their original plan. `total` stays measured
+/// from stock Z 0, including for shortened roughing links and full-depth wall finishing.
+fn operation_depth_plan(op: &Operation, total: f64, step_down: f64, entry: DepthEntry) -> DepthPlan {
+    let start = op.start_depth();
+    let stock_z = if start == 0.0 { 0.0 } else { -start };
+    apply_onion(DepthPlan::new(stock_z, total - start, step_down, entry), op, total)
+}
+
 fn depth_levels(op: &Operation, total: f64, step_down: f64) -> Result<Vec<f64>, CliError> {
-    let plan = apply_onion(DepthPlan::new(0.0, total, step_down, DepthEntry::Plunge), op, total);
+    let plan = operation_depth_plan(op, total, step_down, DepthEntry::Plunge);
     let depths = plan.depths().map_err(|err| op_err(op, err))?;
     let mut levels = Vec::with_capacity(depths.len());
     for depth in depths {
-        let z = -depth;
+        let z = plan.stock_z() - depth;
         if !z.is_finite() {
             return Err(op_err(op, "cut z is not finite"));
         }
@@ -1930,8 +1939,9 @@ fn feed_z(motion: &ClMotion) -> Option<(f64, MoveRole)> {
 
 #[cfg(test)]
 mod tests {
-    use super::run;
+    use super::{depth_levels, run};
     use crate::jobfile::hash_bytes;
+    use proptest::prelude::*;
     use std::ffi::OsString;
     use std::fs;
     use std::path::{Path, PathBuf};
@@ -2008,6 +2018,43 @@ mod tests {
     fn must_run(args: &[OsString]) {
         if let Err(err) = run(args) {
             panic!("{err}");
+        }
+    }
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(64))]
+
+        #[test]
+        fn pocket_start_depth_levels_follow_the_remaining_interval(
+            start_ticks in 0u32..10000,
+            remaining_ticks in 1u32..1000,
+            step_ticks in 1u32..500,
+        ) {
+            let mut raw: serde_json::Value = serde_json::from_str(include_str!("../tests/fixtures/pocket_start.job.json")).expect("job");
+            let start = f64::from(start_ticks) / 10.0;
+            let total = f64::from(start_ticks + remaining_ticks) / 10.0;
+            let step = f64::from(step_ticks) / 10.0;
+            raw["operations"][0]["start_depth"] = serde_json::json!(start);
+            raw["operations"][0]["depth"] = serde_json::json!(total);
+            raw["operations"][0]["step_down"] = serde_json::json!(step);
+            let folder = dir("start-property");
+            let file = folder.join("job.json");
+            fs::write(&file, raw.to_string()).expect("job file");
+            let job = crate::jobfile::load(&file).expect("valid job");
+            let op = job.operations().first().expect("pocket");
+            let levels = depth_levels(op, op.depth(), op.step_down()).map_err(|err| proptest::test_runner::TestCaseError::fail(err.to_string()))?;
+            let count = remaining_ticks.div_ceil(step_ticks);
+            prop_assert_eq!(levels.len(), count as usize);
+            let mut previous = -start;
+            for (index, z) in levels.iter().enumerate() {
+                let offset = ((index as u32 + 1) * step_ticks).min(remaining_ticks);
+                let expected = -f64::from(start_ticks + offset) / 10.0;
+                prop_assert!((*z - expected).abs() < 1e-7);
+                prop_assert!(*z < previous);
+                prop_assert!(previous - *z <= step + 1e-7);
+                prop_assert!(*z >= -total - 1e-7);
+                previous = *z;
+            }
+            prop_assert!((previous + total).abs() < 1e-7);
         }
     }
 }

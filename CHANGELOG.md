@@ -5,6 +5,7 @@
 ### Added
 
 - A built-in `mach4` three-axis mill/router post writes metric output with incremental IJK (`G91.1`) and `M9`/`M30` at the end. The opt-in `dwell.decimal_seconds` setting makes read-back treat an integer `G4 P` as milliseconds and a decimal `G4 P` as seconds, matching Mach4, and the writer always emits a decimal P so Mach4 reads seconds. Existing posts keep their dwell behavior and golden output. This output has not been proven on a machine.
+- Pocket operations may set `start_depth`, a length downward from the original stock surface. Depth passes start below that Z and still end at `depth`. Omitted or 0 leaves existing output unchanged. Other operation kinds reject the field. This output has not been proven on a machine.
 
 ## 0.12.0 — 2026-11-12
 

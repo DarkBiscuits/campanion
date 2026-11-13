@@ -1,0 +1,37 @@
+{
+  "format": "campanion-job/1",
+  "source": {
+    "path": "pocket_start.svg",
+    "hash": "e257091f3fed9a30"
+  },
+  "units": "mm",
+  "heights": {
+    "clearance": 5,
+    "retract": 2
+  },
+  "tools": [
+    {
+      "id": 1,
+      "diameter": 6,
+      "speed": 12000
+    }
+  ],
+  "operations": [
+    {
+      "name": "continue",
+      "type": "pocket",
+      "layers": [
+        "POCKET"
+      ],
+      "tool_id": 1,
+      "start_depth": 3,
+      "depth": 8,
+      "step_down": 2,
+      "stepover": 3,
+      "feeds": {
+        "cut": 1000,
+        "plunge": 300
+      }
+    }
+  ]
+}
