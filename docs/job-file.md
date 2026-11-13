@@ -130,9 +130,9 @@ unique within that operation. The same layer may appear on two operations.
 | Field | Required | Meaning |
 | --- | --- | --- |
 | `name` | yes | Short unique name. |
-| `type` | yes | `profile`, `pocket`, `drill`, `engrave`, `face`, `chamfer`, `surface`, `rough`, `waterline`, `wrap` or `rotary_finish`. |
-| `layers` | yes, except surface, rough, waterline and rotary finish | One or more layer names. A surface, a rough, a waterline or a rotary finish rejects `layers`. |
-| `side` | profile and chamfer | Profile: `inside`, `outside` or `on`. Chamfer: `inside` or `outside`; `on` is rejected. Rejected on pocket, drill, engrave, face, surface, rough, waterline, wrap and rotary finish. |
+| `type` | yes | `profile`, `pocket`, `drill`, `engrave`, `face`, `chamfer`, `surface`, `rough`, `waterline`, `wrap`, `rotary_finish` or `laser_raster`. |
+| `layers` | yes, except surface, rough, waterline, rotary finish and laser raster | One or more layer names. A surface, a rough, a waterline, a rotary finish or a laser raster rejects `layers`. |
+| `side` | profile and chamfer | Profile: `inside`, `outside`, `on`, or `auto`. `auto` treats a closed contour as inside when an odd number of other selected closed contours contain it, and outside otherwise. Open contours are refused with `auto`. Chamfer: `inside` or `outside`; `on` and `auto` are rejected. Rejected on pocket, drill, engrave, face, surface, rough, waterline, wrap and rotary finish. |
 | `tool_id` | yes | `id` of a tool in this file. |
 | `speed` | no | Spindle speed in rpm: positive, finite, and at most 100000. Not scaled by `units`. When set, it overrides `tools[].speed` for this operation. Omitted, the tool's speed is used. See [Spindle speed](#spindle-speed) and [Tool changes](#tool-changes). |
 | `depth` | yes, except chamfer, surface, rough, waterline and rotary finish | Positive distance downward, in `units`. Not an absolute Z. On a profile, pocket, drill, engrave or face this is below the stock surface. On a wrap it is below the cylinder surface. A chamfer rejects `depth`; the tip depth follows from the geometry. A surface, a rough, a waterline or a rotary finish rejects `depth`. |
@@ -156,6 +156,11 @@ unique within that operation. The same layer may appear on two operations.
 | `finish` | profile and pocket | Object with optional `step_down` (positive length in `units`; omitted, equal to `depth`) and optional `floor` (bool, default true, pocket only). Rejected on a face. |
 | `entry` | no | How a pass is entered. Omitted, a plunge. `{"type":"plunge"}`, `{"type":"ramp","angle_deg"}`, or `{"type":"helix","radius","angle_deg"}`. `angle_deg` is from the XY plane, greater than 0 and at most 90, and is not scaled by `units`. A helix `radius` is a length in `units`. One turn drops `2π r tan(angle_deg)`. A rough uses the same object. A surface, a wrap or a rotary finish rejects `entry`. A wrap plunges. The tool rapids to the retract height, then feeds the entry. On a profile, engrave or pocket wall, a ramp or helix is sized from that height down to the first pass when the retract height is above the stock, and from the previous level on later passes, so every posted ramp or helix descent is at most `angle_deg`. A ramp follows the compensated contour, including around corners. A profile ramp that would cross a tab below the bridge top lifts across the bridge instead of descending through it. A pocket area pass uses this entry at each depth, sized from the retract height for the whole drop to that level. The ramp follows the first ring for one circuit and the operation fails, instead of plunging, when that circuit is shorter than the ramp. A helix is a circle about that ring's bounding-box centre; the operation fails when the circle or the feed onto the ring leaves the pocket. Later rings of the same depth are cut at that level. A feed joins two rings when the segment stays in the region the tool centre may enter; otherwise the tool retracts and enters the next ring with the same entry. Omitted, the area pass plunges, and a link that cannot stay inside retracts and plunges. The wall finish, when `finish` is set, uses this entry. |
 | `tabs` | profile | Object with `width` and either `count` or `spacing`, plus an optional `height`. `width` is the bridge left on the part. Same fields and errors as a profile document. Lengths are in `units` (`count` is not scaled). `width` must be > 0. Exactly one of `count` and `spacing`. `height`, when set, must be >= 0 and less than `depth`; omitted or 0 is a full-depth tab. See [Profile tabs](#profile-tabs). Rejected on every other kind. |
+| `lead_in` | profile | Lead into the cut. An object with `type` `none`, `line` (`length`), `perpendicular` (`length`), or `arc` (`radius`). Lengths are in `units` and must be positive. Omitted, a kerf tool uses an arc of one kerf width and a diameter tool uses none. On a closed inside path, a lead that would leave the waste is shrunk to the largest size not below a quarter of the kerf (or the tool diameter), or dropped. Refused with a ramp or helix `entry`. Rejected on every other kind. |
+| `lead_out` | profile | Same object as `lead_in`. Omitted, the same default as `lead_in`. |
+| `direction` | profile and rotary finish | On a profile: `climb` (the default), `conventional`, or `auto`. `auto` uses climb travel after the side is known. On a rotary finish: `zigzag` (the default) or `one_way`. Rejected on every other kind. |
+| `compensation` | profile | `computed` (the default), `controller_left`, or `controller_right`. Computed offsets the path in CAMpanion. Controller leaves the path on the contour so the post can write G41/G42 when it has `cutter_comp`. Refused with a non-zero `stock_to_leave.wall`. Rejected on every other kind. |
+
 | `feeds` | yes | `cut` (required) and `plunge` (optional), in file-length units per minute. Omitted `plunge` means use `cut`. |
 | `pierce_height` | no | Absolute Z to rapid to before the pierce delay. |
 | `cut_height` | no | Absolute Z to feed to after the pierce, before the cut. |
@@ -167,7 +172,8 @@ unique within that operation. The same layer may appear on two operations.
 | `u_min` | rotary finish | Length in `units`. Low end of the pass along the rotary axis. Omitted, the mesh minimum on that axis. May be negative. |
 | `u_max` | rotary finish | Length in `units`. High end of the pass along the rotary axis. Omitted, the mesh maximum on that axis. `u_min` greater than `u_max` is rejected. |
 | `angle_step_deg` | rotary finish | Degrees between passes, greater than 0 and at most 360. Not scaled by `units`. See below. |
-| `direction` | rotary finish | `zigzag` (the default) or `one_way`. |
+
+An inside profile whose offset disappears is refused. On a kerf tool the error is that the slot is narrower than the kerf; on a diameter tool it stays that the tool does not fit inside the contour. After a closed inside profile is cut with no tabs, a later rapid whose XY travel crosses that loop writes `campanion: warning:` that a rapid crosses a freed slug. The job still posts.
 
 `depth` and `step_down` must be a legal `campanion-path` depth plan: positive, at most 1e6 mm,
 and at most 1024 passes. Five millimetres at a two millimetre step is three passes (2, 4, 5).
@@ -920,6 +926,36 @@ as the cell. This output has not been proven on a machine.
 
 `examples/dome_stock.job.json` roughs and finishes `examples/dome.stl` with an explicit stock box
 and a 2 mm cell.
+
+
+## Laser raster
+
+`type` `laser_raster` engraves a PGM image that sits beside the job. The source part is still
+required (any 2D format); its layers are not used. An STL source is refused. This output has
+not been proven on a machine.
+
+`image` is a `.pgm` path relative to the job file, `P2` or `P5`, with a max value in 1..=65535.
+Lightness is the sample divided by that max: 0 is black and 1 is white. Images larger than 8192
+pixels on a side, or more than 4,000,000 pixels, are refused.
+
+`origin` is the lower-left of the placed image, in `units`. `width` and `height` are the placed
+size, in `units`. `angle_deg` is the scan direction (default 0, along +X, with +Y the step
+direction) and is not scaled. `step` is the spacing between scan lines; omitted, it is the
+smaller pixel size. Lines zigzag. `overscan` (default 0) is extra travel past each end of the
+image at power 0. `scanning_offset` (default 0) is applied along each pass's travel so a
+forward pass and a reverse pass agree on the image once that offset is undone.
+
+`grey_map` maps lightness to IR power in 0..1. Omitted or `"linear"` is `power = 1 - lightness`
+(black burns at full power, white is 0). `{"type":"gamma","gamma"}` uses
+`power = 1 - lightness**gamma` with a positive `gamma`. `{"type":"table","values"}` is a
+piecewise-linear map, at least two values in 0..=1, from lightness 0 to 1. A grey the map
+sends to zero is power 0, and a completely white image is refused.
+
+`feeds.cut` is the scan feed. Optional `timing` and `cut_height` are the same as on other
+operations; omitted, the burns sit at Z 0. Rapids between lines are at the job retract height.
+The `grbl_laser` post writes each segment's `S` from that power, including `S0` on the overscan.
+
+Layers, depth, step-down, and the other 2D or mesh-only keys are rejected.
 
 ## Limits
 

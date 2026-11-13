@@ -44,7 +44,7 @@ fn circle_program(start: [f64; 3], end: [f64; 3], centre: [f64; 3], ccw: bool) -
     let sense = if ccw { ArcSense::Ccw } else { ArcSense::Cw };
     let blocks = vec![
         ClBlock::Motion(ClMotion::Rapid { to: pose(start[0], start[1], start[2] + 5.0), feed: None }),
-        ClBlock::Motion(ClMotion::Linear { to: pose(start[0], start[1], start[2]), feed: 500.0, role: MoveRole::Plunge }),
+        ClBlock::Motion(ClMotion::Linear { to: pose(start[0], start[1], start[2]), feed: 500.0, role: MoveRole::Plunge, power: None }),
         ClBlock::Motion(ClMotion::Arc {
             to: pose(end[0], end[1], end[2]),
             plane: Plane::Xy,
@@ -52,6 +52,7 @@ fn circle_program(start: [f64; 3], end: [f64; 3], centre: [f64; 3], ccw: bool) -
             sense,
             feed: 1500.0,
             role: MoveRole::Cut,
+            power: None,
         }),
         ClBlock::Motion(ClMotion::Rapid { to: pose(end[0], end[1], end[2] + 5.0), feed: None }),
     ];
@@ -426,6 +427,7 @@ fn trace_rejects_a_missing_half_and_a_near_full_gap() {
         center: [0.0, 0.0, 0.0],
         radius: None,
         feed: Some(100.0),
+        s: None,
         rotary: None,
         inverse_time: false,
         five: [None; 3],
