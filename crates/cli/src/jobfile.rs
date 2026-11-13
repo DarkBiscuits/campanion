@@ -3384,6 +3384,7 @@ fn reject_laser_raster_foreign_keys(map: &Map<String, Value>) -> Result<(), JobF
     for key in [
         "layers",
         "depth",
+        "start_depth",
         "step_down",
         "onion_skin",
         "stepover",
@@ -3470,6 +3471,7 @@ fn finish_laser_raster(name: String, map: &Map<String, Value>, scale: f64, tools
         layers: Vec::new(),
         tool_id,
         depth: 0.0,
+        start_depth: 0.0,
         step_down: 0.0,
         onion_skin: None,
         dwell: None,
@@ -4649,7 +4651,7 @@ mod tests {
 
     #[test]
     fn start_depth_is_rejected_on_every_other_operation_even_when_zero() {
-        for kind in ["profile", "drill", "engrave", "face", "chamfer", "surface", "rough", "waterline", "wrap", "rotary_finish"] {
+        for kind in ["profile", "drill", "engrave", "face", "chamfer", "surface", "rough", "waterline", "wrap", "rotary_finish", "laser_raster"] {
             let mut text = start_depth_text(r#", "start_depth":0"#).replace(r#""type":"pocket""#, &format!("\"type\":\"{kind}\""));
             if matches!(kind, "profile" | "chamfer") {
                 text = text.replace(r#""layers""#, r#""side":"outside","layers""#);
