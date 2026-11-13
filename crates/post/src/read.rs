@@ -56,6 +56,8 @@ pub enum ReadMove {
         end: Xyz,
         /// Feed word on this block, or the modal feed when the block omits `F`.
         feed: Option<f64>,
+        /// `S` word written on this block, when present. Modal S on an earlier block is not used.
+        s: Option<f64>,
         /// Modal A/B or lathe C angle in degrees after this block.
         rotary: Option<f64>,
         /// Modal inverse-time state (`G93` on LinuxCNC) after this block.
@@ -75,6 +77,8 @@ pub enum ReadMove {
         radius: Option<f64>,
         /// Feed word on this block, or the modal feed when the block omits `F`.
         feed: Option<f64>,
+        /// `S` word written on this block, when present. Modal S on an earlier block is not used.
+        s: Option<f64>,
         /// Modal A/B or lathe C angle in degrees after this block.
         rotary: Option<f64>,
         /// Modal inverse-time state (`G93` on LinuxCNC) after this block.
@@ -108,6 +112,14 @@ pub enum ReadMove {
 }
 
 impl ReadMove {
+    /// `S` written on this feed or arc block. `None` when the block omitted `S`, and on rapids, dwells and threads.
+    pub fn s_word(&self) -> Option<f64> {
+        match self {
+            Self::Linear { s, .. } | Self::Arc { s, .. } => *s,
+            Self::Rapid { .. } | Self::Dwell { .. } | Self::Thread { .. } | Self::Other { .. } => None,
+        }
+    }
+
     /// Modal A, B, C after this block. `[None; 3]` on a dwell or a post without `five_axis`.
     pub fn five(&self) -> [Option<f64>; 3] {
         match self {
@@ -174,14 +186,15 @@ impl<'a> Parser<'a> {
         if stripped.trim() == "%" {
             return Ok(None);
         }
-        let mut words = tokenize(&stripped)?;
+        let dwell_letter = self.post.dwell.word.chars().next().unwrap_or('P');
+        let (mut words, dwell_decimal) = tokenize_with_decimal(&stripped, dwell_letter)?;
         if self.post.line_numbers.enabled {
             strip_line_number(&mut words, self.post.line_numbers.prefix.chars().next().unwrap_or('N'))?;
         }
         if words.is_empty() {
             return Ok(None);
         }
-        self.interpret(words, stripped.trim())
+        self.interpret(words, stripped.trim(), dwell_decimal)
     }
 }
 
@@ -214,7 +227,7 @@ impl<'a> Parser<'a> {
         self.post.probe_number().is_some_and(|code| (value - code).abs() < 1e-6)
     }
 
-    fn interpret(&mut self, mut words: Vec<(char, f64)>, raw: &str) -> Result<Option<ReadMove>> {
+    fn interpret(&mut self, mut words: Vec<(char, f64)>, raw: &str, dwell_decimal: bool) -> Result<Option<ReadMove>> {
         self.note_sub_line(raw);
         if let Some((letter, value)) = words.first().copied()
             && letter == 'O'
@@ -253,6 +266,15 @@ impl<'a> Parser<'a> {
                         || self.is_b_head_letter(letter)
                         || self.is_transfer_letter(letter) => {}
                 letter => return Err(invalid(format!("unexpected word {letter}"))),
+            }
+        }
+        if self.post.dwell.decimal_seconds && g_codes.contains(&4) {
+            // Check before non-motion shortcuts (e.g. G53), including decimal G91.1.
+            if words.iter().filter(|(letter, _)| *letter == 'G').count() != 1 {
+                return Err(invalid("dwell must be the only G code in its block"));
+            }
+            if words.iter().any(|(letter, _)| matches!(letter, 'I' | 'J' | 'K' | 'R' | 'Q')) {
+                return Err(invalid("literal-P dwell does not accept arc or cycle words"));
             }
         }
         // Resolve feed mode before scaling words, regardless of their order in the block.
@@ -357,7 +379,7 @@ impl<'a> Parser<'a> {
                 7 | 8 | 50 | 96 | 97 | 98 if self.post.is_lathe() => {}
                 28 if self.post.is_lathe() => {}
                 53 => {}
-                21 | 40 | 43 | 49 | 54 | 55 | 56 | 57 | 58 | 59 | 61 | 64 | 80 | 90 | 94 => {}
+                21 | 40 | 41 | 42 | 43 | 49 | 54 | 55 | 56 | 57 | 58 | 59 | 61 | 64 | 80 | 90 | 94 => {}
                 code if self.is_five_mode_g(code) => {}
                 code if self.is_sub_spindle_g(code) => {}
                 code if self.is_transfer_g(code) => {}
@@ -420,7 +442,7 @@ impl<'a> Parser<'a> {
                 return Err(invalid("dwell cannot share a block with motion"));
             }
             let word = unique(&words, dwell_letter)?.ok_or_else(|| invalid("dwell is missing its value"))?;
-            let seconds = if self.post.dwell.unit == "ms" { word / 1000.0 } else { word };
+            let seconds = self.post.dwell.seconds(word, dwell_decimal);
             if !(seconds.is_finite() && seconds >= 0.0) {
                 return Err(invalid("dwell must be >= 0"));
             }
@@ -490,7 +512,7 @@ impl<'a> Parser<'a> {
         let five = self.five;
         let move_ = match motion {
             Motion::Rapid => ReadMove::Rapid { end, feed, rotary, inverse_time, five },
-            Motion::Linear => ReadMove::Linear { end, feed, rotary, inverse_time, five },
+            Motion::Linear => ReadMove::Linear { end, feed, s: unique(words, 'S')?, rotary, inverse_time, five },
             Motion::Cw | Motion::Ccw => {
                 let mut sense = if matches!(motion, Motion::Cw) { ArcSense::Cw } else { ArcSense::Ccw };
                 if plane == Plane::Zx && self.post.lathe.as_ref().is_some_and(|lathe| lathe.arc_flip) {
@@ -515,7 +537,7 @@ impl<'a> Parser<'a> {
                 } else {
                     return Err(invalid("arc needs IJK or R"));
                 };
-                ReadMove::Arc { sense, end, center, radius, feed, rotary, inverse_time, five }
+                ReadMove::Arc { sense, end, center, radius, feed, s: unique(words, 'S')?, rotary, inverse_time, five }
             }
         };
         self.pos = end;
@@ -906,6 +928,12 @@ pub(crate) fn strip_comments(line: &str) -> String {
 }
 
 pub(crate) fn tokenize(line: &str) -> Result<Vec<(char, f64)>> {
+    tokenize_with_decimal(line, '\0').map(|(words, _)| words)
+}
+
+// Preserve the requested word's decimal spelling without changing other numeric semantics.
+fn tokenize_with_decimal(line: &str, decimal_word: char) -> Result<(Vec<(char, f64)>, bool)> {
+    let mut has_decimal = false;
     let bytes = line.as_bytes();
     let mut index = 0;
     let mut words = Vec::new();
@@ -925,10 +953,15 @@ pub(crate) fn tokenize(line: &str) -> Result<Vec<(char, f64)>> {
             return Err(invalid("unexpected character in g-code"));
         }
         index += 1;
+        let start = index;
         let value = take_number(line, bytes, &mut index)?;
-        words.push(((letter as char).to_ascii_uppercase(), value));
+        let letter = (letter as char).to_ascii_uppercase();
+        if letter == decimal_word {
+            has_decimal |= line.get(start..index).is_some_and(|raw| raw.contains('.'));
+        }
+        words.push((letter, value));
     }
-    Ok(words)
+    Ok((words, has_decimal))
 }
 
 fn take_number(line: &str, bytes: &[u8], index: &mut usize) -> Result<f64> {

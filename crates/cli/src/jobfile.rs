@@ -14,6 +14,16 @@
 //! pitch. The angle is in `(0, 90]` degrees. The radius is positive and at most 1e6 mm.
 //! `campanion run` sizes the first ramp or helix from the retract height when that height is
 //! above the stock, so the posted descent stays within the angle.
+//! A profile may set `lead_in` and `lead_out`: `none`, `line`, `perpendicular`, or `arc`.
+//! Lengths scale with `units`. Omitted, a kerf tool uses an arc of one kerf radius and a
+//! diameter tool uses none. On a closed inside path, leads that would leave the waste shrink
+//! to at least a quarter of the kerf or are dropped. Leads are refused with a ramp or helix entry.
+//! A profile may set `direction`: `climb` (the default), `conventional`, or `auto` (`auto` is
+//! climb after the side is known). `side` may be `auto`: a closed contour contained by an odd
+//! number of other selected closed contours is an inside cut, otherwise outside. A profile may
+//! set `compensation`: `computed` (the default), `controller_left`, or `controller_right`.
+//! Controller compensation does not offset the path; the post writes G41/G42 when it supports
+//! `cutter_comp`. Controller compensation is refused with a non-zero `stock_to_leave.wall`.
 //!
 //! A STEP source, a path ending in `.step` or `.stp` in any case, must include `face`: a
 //! point `[x, y, z]` on the planar face to cut. Those coordinates are millimetres in model
@@ -141,13 +151,13 @@ use campanion_ir::{
     CutterSense as IrCutterSense, Feeds, FiveAxisSetup, Kinematics, ProcessParams, RotaryAxisKind, RotaryDirection, RotaryLimits, RotarySetup,
     SolutionPolicy, Tool as IrTool, ToolPose, Vec3,
 };
-use campanion_path::{CutterSense, DepthEntry, DepthPlan, ProfileSide, TabLayout, TabSpec, Tool as PathTool};
+use campanion_path::{Compensation, CutDirection, CutterSense, DepthEntry, DepthPlan, Lead, ProfileSide, TabLayout, TabSpec, Tool as PathTool};
 use serde_json::{Map, Number, Value};
 
 use crate::error::{CliError, MAX_JSON_BYTES};
 use crate::job::{
-    as_bool, as_f64, as_str, as_u32, check_keys, object, optional, parse_feeds, parse_params, parse_side, parse_tabs, parse_tool, require,
-    required_name,
+    as_bool, as_f64, as_str, as_u32, check_keys, object, optional, parse_compensation, parse_feeds, parse_lead, parse_params, parse_side, parse_tabs,
+    parse_tool, require, required_name,
 };
 
 /// On-disk tag this build reads. Minor tags are not accepted: unknown fields already fail the load.
@@ -721,13 +731,38 @@ impl JobTool {
     }
 }
 
+/// Profile side in a job file, including `auto`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum JobProfileSide {
+    /// Offset into the interior.
+    Inside,
+    /// Offset away from the interior.
+    Outside,
+    /// Follow the contour with no offset.
+    On,
+    /// Infer inside or outside from which selected contours contain this one.
+    Auto,
+}
+
+impl JobProfileSide {
+    /// Fixed side when the file did not say `auto`.
+    pub fn fixed(self) -> Option<ProfileSide> {
+        match self {
+            Self::Inside => Some(ProfileSide::Inside),
+            Self::Outside => Some(ProfileSide::Outside),
+            Self::On => Some(ProfileSide::On),
+            Self::Auto => None,
+        }
+    }
+}
+
 /// What an operation asks the path engine to do. Geometry comes from the source layers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OperationKind {
-    /// Profile. `side` is the same enum the profile job uses.
+    /// Profile. `side` may also be `auto`, which the runner resolves from containment.
     Profile {
-        /// Inside, outside, or on the contour.
-        side: ProfileSide,
+        /// Inside, outside, on the contour, or auto.
+        side: JobProfileSide,
     },
     /// Clear the interior of the layers.
     Pocket,
@@ -752,6 +787,8 @@ pub enum OperationKind {
     Wrap,
     /// Continuous rotary finish around the job rotary axis. No layers and no side.
     RotaryFinish,
+    /// Raster a PGM beside the job with per-move laser power. No layers and no side.
+    LaserRaster,
 }
 
 /// How consecutive rotary-finish passes are joined.
@@ -774,6 +811,58 @@ struct RotaryFinishGeom {
     u_max: Option<f64>,
     angle_step_deg: Option<f64>,
     travel: RotaryTravel,
+}
+
+/// Placement and scan parameters for a [`OperationKind::LaserRaster`]. Lengths are millimetres.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct LaserRasterGeom {
+    image: String,
+    origin: (f64, f64),
+    width: f64,
+    height: f64,
+    angle: f64,
+    step: Option<f64>,
+    overscan: f64,
+    scanning_offset: f64,
+    map: campanion_path::GreyMap,
+}
+
+impl LaserRasterGeom {
+    pub(crate) fn image(&self) -> &str {
+        &self.image
+    }
+
+    pub(crate) fn origin(&self) -> (f64, f64) {
+        self.origin
+    }
+
+    pub(crate) fn width(&self) -> f64 {
+        self.width
+    }
+
+    pub(crate) fn height(&self) -> f64 {
+        self.height
+    }
+
+    pub(crate) fn angle(&self) -> f64 {
+        self.angle
+    }
+
+    pub(crate) fn step(&self) -> Option<f64> {
+        self.step
+    }
+
+    pub(crate) fn overscan(&self) -> f64 {
+        self.overscan
+    }
+
+    pub(crate) fn scanning_offset(&self) -> f64 {
+        self.scanning_offset
+    }
+
+    pub(crate) fn map(&self) -> &campanion_path::GreyMap {
+        &self.map
+    }
 }
 
 /// Cylinder and flat-frame offsets for a [`OperationKind::Wrap`]. Lengths are millimetres.
@@ -905,8 +994,18 @@ pub struct Operation {
     speed: Option<f64>,
     /// Bridges on a profile. `None` when the file omits `tabs`, and on every other kind.
     tabs: Option<TabSpec>,
+    /// Lead-in on a profile. `None` when the file omits `lead_in` (the runner then applies the default).
+    lead_in: Option<Lead>,
+    /// Lead-out on a profile. `None` when the file omits `lead_out`.
+    lead_out: Option<Lead>,
+    /// Travel direction on a profile. Other kinds store climb (unused).
+    cut_direction: CutDirection,
+    /// Kerf or cutter compensation on a profile. Other kinds store computed (unused).
+    compensation: Compensation,
     /// Continuous tool axis. `None` except on a surface that sets `tool_axis`.
     tool_axis: Option<ToolAxis>,
+    /// Raster placement. `None` except on a laser raster.
+    raster: Option<LaserRasterGeom>,
 }
 
 /// How a surface aims the tool, then clamps it toward +Z.
@@ -998,6 +1097,11 @@ impl Operation {
 
     pub fn kind(&self) -> OperationKind {
         self.kind
+    }
+
+    /// Raster placement. `None` except on a laser raster.
+    pub(crate) fn raster(&self) -> Option<&LaserRasterGeom> {
+        self.raster.as_ref()
     }
 
     /// Layer names in the source part. Unique within this operation, case-sensitive.
@@ -1151,6 +1255,26 @@ impl Operation {
     /// inside the spec is a full-depth tab.
     pub fn tabs(&self) -> Option<TabSpec> {
         self.tabs
+    }
+
+    /// Lead-in when the file set `lead_in`. `None` means the runner should apply the default.
+    pub fn lead_in(&self) -> Option<Lead> {
+        self.lead_in
+    }
+
+    /// Lead-out when the file set `lead_out`. `None` means the runner should apply the default.
+    pub fn lead_out(&self) -> Option<Lead> {
+        self.lead_out
+    }
+
+    /// Climb, conventional, or auto (auto is stored as climb). Default climb.
+    pub fn cut_direction(&self) -> CutDirection {
+        self.cut_direction
+    }
+
+    /// Computed or controller compensation. Default computed.
+    pub fn compensation(&self) -> Compensation {
+        self.compensation
     }
 
     /// Cut feed, and an optional plunge feed. `plunge` of `None` means "use the cut feed".
@@ -1611,6 +1735,9 @@ fn check_mesh_source(source: &Source, operations: &[Operation], tools: &[JobTool
         }
         if matches!(operation.kind(), OperationKind::RotaryFinish) && !stl {
             return Err(JobFileError::invalid("rotary finish is only valid on an STL source"));
+        }
+        if matches!(operation.kind(), OperationKind::LaserRaster) && stl {
+            return Err(JobFileError::invalid("laser raster is not valid on an STL source"));
         }
     }
     for tool in tools {
@@ -2345,7 +2472,18 @@ fn parse_operation(value: &Value, scale: f64, tools: &[JobTool]) -> Result<Opera
             "plane",
             "speed",
             "tabs",
+            "lead_in",
+            "lead_out",
+            "compensation",
             "tool_axis",
+            "image",
+            "origin",
+            "height",
+            "pixel_size",
+            "step",
+            "overscan",
+            "scanning_offset",
+            "grey_map",
         ],
         "operation",
     )
@@ -2360,6 +2498,12 @@ fn parse_operation(value: &Value, scale: f64, tools: &[JobTool]) -> Result<Opera
     }
     if optional(map, "tabs").is_some() && !matches!(kind, OperationKind::Profile { .. }) {
         return Err(op_invalid(&name, "tabs is only valid on a profile"));
+    }
+    if (optional(map, "lead_in").is_some() || optional(map, "lead_out").is_some()) && !matches!(kind, OperationKind::Profile { .. }) {
+        return Err(op_invalid(&name, "leads are only valid on a profile"));
+    }
+    if optional(map, "compensation").is_some() && !matches!(kind, OperationKind::Profile { .. }) {
+        return Err(op_invalid(&name, "compensation is only valid on a profile"));
     }
     if optional(map, "tool_axis").is_some() && !matches!(kind, OperationKind::Surface) {
         return Err(JobFileError::invalid("tool_axis is only valid on a surface"));
@@ -2380,6 +2524,14 @@ fn parse_operation(value: &Value, scale: f64, tools: &[JobTool]) -> Result<Opera
     }
     if matches!(kind, OperationKind::RotaryFinish) {
         return Ok(attach_plane(with_speed(finish_rotary(name, map, scale, tools)?, speed), plane));
+    }
+    if matches!(kind, OperationKind::LaserRaster) {
+        return Ok(attach_plane(with_speed(with_index(finish_laser_raster(name, map, scale, tools)?, index_deg), speed), plane));
+    }
+    for key in ["image", "origin", "height", "pixel_size", "step", "overscan", "scanning_offset", "grey_map"] {
+        if optional(map, key).is_some() {
+            return Err(JobFileError::invalid(format!("{key} is only valid on a laser raster")));
+        }
     }
     if optional(map, "sample_step").is_some() {
         return Err(JobFileError::invalid("sample_step is only valid on a surface"));
@@ -2408,10 +2560,13 @@ fn parse_operation(value: &Value, scale: f64, tools: &[JobTool]) -> Result<Opera
     if optional(map, "v_offset").is_some() {
         return Err(JobFileError::invalid("v_offset is only valid on a wrap"));
     }
-    for key in ["u_min", "u_max", "angle_step_deg", "direction"] {
+    for key in ["u_min", "u_max", "angle_step_deg"] {
         if optional(map, key).is_some() {
             return Err(JobFileError::invalid(format!("{key} is only valid on a rotary finish")));
         }
+    }
+    if optional(map, "direction").is_some() && !matches!(kind, OperationKind::Profile { .. }) {
+        return Err(JobFileError::invalid("direction is only valid on a profile or a rotary finish"));
     }
     reject_chamfer_cut_keys(map, kind)?;
     let layers = parse_layers(require(map, "layers").map_err(from_cli)?)?;
@@ -2431,6 +2586,16 @@ fn parse_operation(value: &Value, scale: f64, tools: &[JobTool]) -> Result<Opera
     let feeds = parse_operation_feeds(require(map, "feeds").map_err(from_cli)?, scale)?;
     let params = parse_timing(map, scale)?;
     let tabs = if matches!(kind, OperationKind::Profile { .. }) { parse_profile_tabs(optional(map, "tabs"), depth, scale)? } else { None };
+    let (lead_in, lead_out) = if matches!(kind, OperationKind::Profile { .. }) {
+        (parse_profile_lead(optional(map, "lead_in"), scale)?, parse_profile_lead(optional(map, "lead_out"), scale)?)
+    } else {
+        (None, None)
+    };
+    let cut_direction = parse_profile_direction(optional(map, "direction"), kind)?;
+    let compensation = parse_profile_compensation(optional(map, "compensation"), kind)?;
+    if !matches!(compensation, Compensation::Computed) && stock_to_leave.wall() != 0.0 {
+        return Err(op_invalid(&name, "controller compensation cannot be combined with stock_to_leave.wall"));
+    }
     let onion_skin = parse_onion_skin(map, kind, depth, step_down, finish.as_ref(), start_depth, scale)?;
     Ok(Operation {
         name,
@@ -2466,7 +2631,12 @@ fn parse_operation(value: &Value, scale: f64, tools: &[JobTool]) -> Result<Opera
         plane,
         speed,
         tabs,
+        lead_in,
+        lead_out,
+        cut_direction,
+        compensation,
         tool_axis: None,
+        raster: None,
     })
 }
 
@@ -2595,7 +2765,12 @@ fn finish_surface(name: String, map: &Map<String, Value>, scale: f64, tools: &[J
         plane: None,
         speed: None,
         tabs: None,
+        lead_in: None,
+        lead_out: None,
+        cut_direction: CutDirection::Climb,
+        compensation: Compensation::Computed,
         tool_axis,
+        raster: None,
     })
 }
 
@@ -2834,7 +3009,12 @@ fn finish_rough(name: String, map: &Map<String, Value>, scale: f64, tools: &[Job
         plane: None,
         speed: None,
         tabs: None,
+        lead_in: None,
+        lead_out: None,
+        cut_direction: CutDirection::Climb,
+        compensation: Compensation::Computed,
         tool_axis: None,
+        raster: None,
     })
 }
 
@@ -2960,7 +3140,12 @@ fn finish_waterline(name: String, map: &Map<String, Value>, scale: f64, tools: &
         plane: None,
         speed: None,
         tabs: None,
+        lead_in: None,
+        lead_out: None,
+        cut_direction: CutDirection::Climb,
+        compensation: Compensation::Computed,
         tool_axis: None,
+        raster: None,
     })
 }
 
@@ -3057,7 +3242,12 @@ fn finish_wrap(name: String, map: &Map<String, Value>, scale: f64, tools: &[JobT
         plane: None,
         speed: None,
         tabs: None,
+        lead_in: None,
+        lead_out: None,
+        cut_direction: CutDirection::Climb,
+        compensation: Compensation::Computed,
         tool_axis: None,
+        raster: None,
     })
 }
 
@@ -3180,8 +3370,185 @@ fn finish_rotary(name: String, map: &Map<String, Value>, scale: f64, tools: &[Jo
         plane: None,
         speed: None,
         tabs: None,
+        lead_in: None,
+        lead_out: None,
+        cut_direction: CutDirection::Climb,
+        compensation: Compensation::Computed,
         tool_axis: None,
+        raster: None,
     })
+}
+
+/// Keys a laser raster does not accept. `side` is already rejected by [`parse_kind`].
+fn reject_laser_raster_foreign_keys(map: &Map<String, Value>) -> Result<(), JobFileError> {
+    for key in [
+        "layers",
+        "depth",
+        "step_down",
+        "onion_skin",
+        "stepover",
+        "scallop_height",
+        "sample_step",
+        "margin",
+        "floor_z",
+        "top_z",
+        "grid",
+        "min_slope_deg",
+        "v_angle_deg",
+        "tip_diameter",
+        "tip_clearance",
+        "stock_to_leave",
+        "finish",
+        "entry",
+        "dwell",
+        "diameter",
+        "u_offset",
+        "v_offset",
+        "u_min",
+        "u_max",
+        "angle_step_deg",
+        "direction",
+        "tabs",
+        "tool_axis",
+        "pixel_size",
+    ] {
+        if optional(map, key).is_some() {
+            return Err(JobFileError::invalid(format!("{key} is not valid on a laser raster")));
+        }
+    }
+    Ok(())
+}
+
+fn finish_laser_raster(name: String, map: &Map<String, Value>, scale: f64, tools: &[JobTool]) -> Result<Operation, JobFileError> {
+    reject_laser_raster_foreign_keys(map)?;
+    let tool_id = as_u32(require(map, "tool_id").map_err(from_cli)?, "tool_id").map_err(from_cli)?;
+    if tools.iter().all(|tool| tool.id() != tool_id) {
+        return Err(JobFileError::invalid(format!("unknown tool {tool_id}")));
+    }
+    let image = as_str(require(map, "image").map_err(from_cli)?, "image").map_err(from_cli)?;
+    check_source_path(image)?;
+    if !image.to_ascii_lowercase().ends_with(".pgm") {
+        return Err(JobFileError::invalid("laser raster image must be a .pgm file"));
+    }
+    let origin = parse_xy(require(map, "origin").map_err(from_cli)?, scale, "origin")?;
+    let width = positive_length(require(map, "width").map_err(from_cli)?, scale, "width")?;
+    let height = positive_length(require(map, "height").map_err(from_cli)?, scale, "height")?;
+    let angle = match optional(map, "angle_deg") {
+        Some(value) => {
+            let degrees = as_f64(value, "angle_deg").map_err(from_cli)?;
+            if !degrees.is_finite() {
+                return Err(JobFileError::invalid("angle_deg must be finite"));
+            }
+            degrees.to_radians()
+        }
+        None => 0.0,
+    };
+    let step = match optional(map, "step") {
+        Some(value) => Some(positive_length(value, scale, "step")?),
+        None => None,
+    };
+    let overscan = match optional(map, "overscan") {
+        Some(value) => non_negative_length(value, scale, "overscan")?,
+        None => 0.0,
+    };
+    let scanning_offset = match optional(map, "scanning_offset") {
+        Some(value) => {
+            let value = scale_f64(value, scale, "scanning_offset")?;
+            if !value.is_finite() {
+                return Err(JobFileError::invalid("scanning_offset must be finite"));
+            }
+            value
+        }
+        None => 0.0,
+    };
+    let map_kind = parse_grey_map(optional(map, "grey_map"))?;
+    let feeds = parse_operation_feeds(require(map, "feeds").map_err(from_cli)?, scale)?;
+    let params = parse_timing(map, scale)?;
+    Ok(Operation {
+        name,
+        kind: OperationKind::LaserRaster,
+        layers: Vec::new(),
+        tool_id,
+        depth: 0.0,
+        step_down: 0.0,
+        onion_skin: None,
+        dwell: None,
+        stepover: None,
+        scallop_height: None,
+        sample_step: None,
+        floor_z: None,
+        top_z: None,
+        grid: None,
+        min_slope_deg: 0.0,
+        face_angle: angle,
+        margin: 0.0,
+        width,
+        v_angle: 0.0,
+        tip_diameter: 0.0,
+        tip_clearance: 0.0,
+        stock_to_leave: StockToLeave::default(),
+        finish: None,
+        entry: DepthEntry::Plunge,
+        feeds,
+        params,
+        index_deg: None,
+        wrap_geom: None,
+        rotary_geom: None,
+        plane: None,
+        speed: None,
+        tabs: None,
+        lead_in: None,
+        lead_out: None,
+        cut_direction: CutDirection::Climb,
+        compensation: Compensation::Computed,
+        tool_axis: None,
+        raster: Some(LaserRasterGeom { image: image.to_string(), origin, width, height, angle, step, overscan, scanning_offset, map: map_kind }),
+    })
+}
+
+fn parse_grey_map(value: Option<&Value>) -> Result<campanion_path::GreyMap, JobFileError> {
+    let Some(value) = value else {
+        return Ok(campanion_path::GreyMap::Linear);
+    };
+    if let Some(text) = value.as_str() {
+        return match text {
+            "linear" => Ok(campanion_path::GreyMap::Linear),
+            _ => Err(JobFileError::invalid("grey_map must be \"linear\" or an object")),
+        };
+    }
+    let map = object(value, "grey_map").map_err(from_cli)?;
+    let kind = as_str(require(map, "type").map_err(from_cli)?, "grey_map type").map_err(from_cli)?;
+    match kind {
+        "linear" => {
+            check_keys(map, &["type"], "grey_map").map_err(from_cli)?;
+            Ok(campanion_path::GreyMap::Linear)
+        }
+        "gamma" => {
+            check_keys(map, &["type", "gamma"], "grey_map").map_err(from_cli)?;
+            let gamma = as_f64(require(map, "gamma").map_err(from_cli)?, "gamma").map_err(from_cli)?;
+            if !(gamma.is_finite() && gamma > 0.0) {
+                return Err(JobFileError::invalid("grey map gamma must be positive"));
+            }
+            Ok(campanion_path::GreyMap::Gamma { gamma })
+        }
+        "table" => {
+            check_keys(map, &["type", "values"], "grey_map").map_err(from_cli)?;
+            let list = array(require(map, "values").map_err(from_cli)?, "grey_map values", 4096)?;
+            if list.len() < 2 {
+                return Err(JobFileError::invalid("grey map table needs at least two values"));
+            }
+            let mut values = Vec::with_capacity(list.len());
+            for item in list {
+                let value = as_f64(item, "grey map table value").map_err(from_cli)?;
+                if !value.is_finite() || !(0.0..=1.0).contains(&value) {
+                    return Err(JobFileError::invalid("grey map table values must be in 0..=1"));
+                }
+                values.push(value);
+            }
+            Ok(campanion_path::GreyMap::Table { values })
+        }
+        other => Err(JobFileError::invalid(format!("unknown grey_map type `{other}`"))),
+    }
 }
 
 fn with_index(mut operation: Operation, index_deg: Option<f64>) -> Operation {
@@ -3581,6 +3948,30 @@ fn scaled_tab_length(value: f64, scale: f64, what: &str) -> Result<f64, JobFileE
     if scaled.is_finite() { Ok(scaled) } else { Err(JobFileError::invalid(format!("{what} must be finite"))) }
 }
 
+fn parse_profile_lead(value: Option<&Value>, scale: f64) -> Result<Option<Lead>, JobFileError> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    Ok(Some(scale_lead(parse_lead(Some(value)).map_err(from_cli)?, scale)?))
+}
+
+fn scale_lead(lead: Lead, scale: f64) -> Result<Lead, JobFileError> {
+    match lead {
+        Lead::None => Ok(Lead::None),
+        Lead::Line { length } => Ok(Lead::Line { length: scale_lead_length(length, scale, "lead length")? }),
+        Lead::Perpendicular { length } => Ok(Lead::Perpendicular { length: scale_lead_length(length, scale, "lead length")? }),
+        Lead::Arc { radius } => Ok(Lead::Arc { radius: scale_lead_length(radius, scale, "lead radius")? }),
+    }
+}
+
+fn scale_lead_length(value: f64, scale: f64, what: &str) -> Result<f64, JobFileError> {
+    let scaled = scaled_tab_length(value, scale, what)?;
+    if !(scaled > 0.0) {
+        return Err(JobFileError::invalid(format!("{what} must be positive")));
+    }
+    cap_under(scaled, MAX_MM, what)
+}
+
 /// `entry` is optional. Lengths scale with the file units. Angles stay in degrees until they
 /// are stored as radians. A helix pitch is the drop of one turn at that angle.
 fn parse_entry(value: Option<&Value>, scale: f64) -> Result<DepthEntry, JobFileError> {
@@ -3645,8 +4036,7 @@ fn parse_kind(map: &Map<String, Value>) -> Result<OperationKind, JobFileError> {
             let Some(side) = side else {
                 return Err(JobFileError::invalid("profile needs a side"));
             };
-            let side = parse_side(as_str(side, "side").map_err(from_cli)?).map_err(from_cli)?;
-            Ok(OperationKind::Profile { side })
+            Ok(OperationKind::Profile { side: parse_job_profile_side(as_str(side, "side").map_err(from_cli)?)? })
         }
         "pocket" => {
             reject_side(side)?;
@@ -3684,6 +4074,10 @@ fn parse_kind(map: &Map<String, Value>) -> Result<OperationKind, JobFileError> {
             reject_side(side)?;
             Ok(OperationKind::RotaryFinish)
         }
+        "laser_raster" => {
+            reject_side(side)?;
+            Ok(OperationKind::LaserRaster)
+        }
         "chamfer" => {
             let Some(side) = side else {
                 return Err(JobFileError::invalid("chamfer needs a side"));
@@ -3700,6 +4094,41 @@ fn parse_kind(map: &Map<String, Value>) -> Result<OperationKind, JobFileError> {
 
 fn reject_side(side: Option<&Value>) -> Result<(), JobFileError> {
     if side.is_some() { Err(JobFileError::invalid("side is only valid on a profile or a chamfer")) } else { Ok(()) }
+}
+
+fn parse_job_profile_side(text: &str) -> Result<JobProfileSide, JobFileError> {
+    match text {
+        "inside" => Ok(JobProfileSide::Inside),
+        "outside" => Ok(JobProfileSide::Outside),
+        "on" => Ok(JobProfileSide::On),
+        "auto" => Ok(JobProfileSide::Auto),
+        _ => Err(JobFileError::invalid(format!("unknown profile side `{text}`"))),
+    }
+}
+
+fn parse_profile_direction(value: Option<&Value>, kind: OperationKind) -> Result<CutDirection, JobFileError> {
+    let Some(value) = value else {
+        return Ok(CutDirection::Climb);
+    };
+    if !matches!(kind, OperationKind::Profile { .. }) {
+        return Err(JobFileError::invalid("direction is only valid on a profile or a rotary finish"));
+    }
+    match as_str(value, "direction").map_err(from_cli)? {
+        "climb" | "auto" => Ok(CutDirection::Climb),
+        "conventional" => Ok(CutDirection::Conventional),
+        other => Err(JobFileError::invalid(format!("unknown direction `{other}`; a profile takes auto, climb, or conventional"))),
+    }
+}
+
+fn parse_profile_compensation(value: Option<&Value>, kind: OperationKind) -> Result<Compensation, JobFileError> {
+    let Some(value) = value else {
+        return Ok(Compensation::Computed);
+    };
+    if !matches!(kind, OperationKind::Profile { .. }) {
+        return Err(JobFileError::invalid("compensation is only valid on a profile"));
+    }
+    let (compensation, _) = parse_compensation(value).map_err(from_cli)?;
+    Ok(compensation)
 }
 
 fn parse_layers(value: &Value) -> Result<Vec<String>, JobFileError> {
@@ -4149,7 +4578,7 @@ enum DotFold {
 mod tests {
     use super::*;
     use campanion_ir::{Document, Program, SolutionPolicy, Vec3};
-    use campanion_path::Tool as PathTool;
+    use campanion_path::{ControllerSide, Tool as PathTool};
     use proptest::prelude::*;
     use std::fs;
     use std::path::Path;
@@ -4320,7 +4749,7 @@ mod tests {
 
         let ops = job.operations();
         assert_eq!(ops.len(), 3);
-        assert_eq!(ops[0].kind(), OperationKind::Profile { side: ProfileSide::Outside });
+        assert_eq!(ops[0].kind(), OperationKind::Profile { side: JobProfileSide::Outside });
         assert_eq!(ops[0].layers(), &["OUTLINE".to_string()]);
         assert_eq!(ops[0].depth(), 3.0);
         assert_eq!(ops[0].step_down(), 1.5);
@@ -6756,6 +7185,106 @@ mod tests {
         );
         let err = load(&write_job("tabs-rotary", &rotary)).expect_err("rotary");
         assert!(invalid_detail(&err).contains("operation `spin`: tabs is only valid on a profile"), "{err}");
+    }
+
+    #[test]
+    fn profile_leads_parse_scale_and_reject_foreign_keys() {
+        let tools = r#"[{"id":1,"diameter":6}]"#;
+        let loaded = load(&write_job(
+            "leads-ok",
+            &envelope(
+                "p.dxf",
+                tools,
+                &format!("[{}]", profile_op("outer", r#","lead_in":{"type":"arc","radius":2},"lead_out":{"type":"line","length":3}"#)),
+            ),
+        ))
+        .expect("leads");
+        assert_eq!(loaded.operations()[0].lead_in(), Some(Lead::Arc { radius: 2.0 }));
+        assert_eq!(loaded.operations()[0].lead_out(), Some(Lead::Line { length: 3.0 }));
+
+        let omitted = load(&write_job("leads-omit", &envelope("p.dxf", tools, &format!("[{}]", profile_op("outer", ""))))).expect("omit");
+        assert_eq!(omitted.operations()[0].lead_in(), None);
+        assert_eq!(omitted.operations()[0].lead_out(), None);
+
+        let none = load(&write_job(
+            "leads-none",
+            &envelope("p.dxf", tools, &format!("[{}]", profile_op("outer", r#","lead_in":{"type":"none"},"lead_out":{"type":"none"}"#))),
+        ))
+        .expect("none");
+        assert_eq!(none.operations()[0].lead_in(), Some(Lead::None));
+        assert_eq!(none.operations()[0].lead_out(), Some(Lead::None));
+
+        let inch = load(&write_job(
+            "leads-inch",
+            r#"{"format":"campanion-job/1","source":{"path":"p.dxf","hash":"cbf29ce484222325"},"units":"inch","tools":[{"id":1,"diameter":0.25}],"operations":[{"name":"outer","type":"profile","layers":["L"],"side":"outside","tool_id":1,"depth":0.5,"step_down":0.5,"lead_in":{"type":"perpendicular","length":0.25},"lead_out":{"type":"arc","radius":0.125},"feeds":{"cut":40}}]}"#,
+        ))
+        .expect("inch");
+        assert_eq!(inch.operations()[0].lead_in(), Some(Lead::Perpendicular { length: 0.25 * 25.4 }));
+        assert_eq!(inch.operations()[0].lead_out(), Some(Lead::Arc { radius: 0.125 * 25.4 }));
+
+        let cases = [
+            (profile_op("outer", r#","lead_in":{"type":"line"}"#), "missing `length`"),
+            (profile_op("outer", r#","lead_in":{"type":"arc"}"#), "missing `radius`"),
+            (profile_op("outer", r#","lead_in":{"type":"arc","radius":0}"#), "lead radius must be positive"),
+            (profile_op("outer", r#","lead_in":{"type":"line","length":-1}"#), "lead length must be positive"),
+            (profile_op("outer", r#","lead_in":{"type":"slant","length":1}"#), "unknown lead type `slant`"),
+            (
+                r#"{"name":"pocket","type":"pocket","layers":["L"],"tool_id":1,"depth":1,"step_down":1,"lead_in":{"type":"none"},"feeds":{"cut":1}}"#
+                    .to_string(),
+                "operation `pocket`: leads are only valid on a profile",
+            ),
+        ];
+        for (index, (op, needle)) in cases.iter().enumerate() {
+            let err = load(&write_job(&format!("leads-bad-{index}"), &envelope("p.dxf", tools, &format!("[{op}]")))).expect_err(needle);
+            assert!(invalid_detail(&err).contains(needle), "{needle}: {err}");
+        }
+    }
+
+    #[test]
+    fn profile_direction_compensation_and_auto_side_parse() {
+        let tools = r#"[{"id":1,"diameter":6}]"#;
+        let climb = load(&write_job("dir-omit", &envelope("p.dxf", tools, &format!("[{}]", profile_op("outer", ""))))).expect("omit");
+        assert_eq!(climb.operations()[0].cut_direction(), CutDirection::Climb);
+        assert_eq!(climb.operations()[0].compensation(), Compensation::Computed);
+
+        let auto = load(&write_job(
+            "dir-auto",
+            &envelope("p.dxf", tools, &format!("[{}]", r#"{"name":"outer","type":"profile","layers":["L"],"side":"auto","tool_id":1,"depth":1,"step_down":1,"direction":"auto","compensation":"controller_left","feeds":{"cut":1}}"#)),
+        ))
+        .expect("auto");
+        assert_eq!(auto.operations()[0].cut_direction(), CutDirection::Climb);
+        assert_eq!(auto.operations()[0].compensation(), Compensation::Controller(ControllerSide::Left));
+        assert_eq!(auto.operations()[0].kind(), OperationKind::Profile { side: JobProfileSide::Auto });
+
+        let conv = load(&write_job(
+            "dir-conv",
+            &envelope("p.dxf", tools, &format!("[{}]", profile_op("outer", r#","direction":"conventional","compensation":"computed""#))),
+        ))
+        .expect("conv");
+        assert_eq!(conv.operations()[0].cut_direction(), CutDirection::Conventional);
+
+        let cases = [
+            (profile_op("outer", r#","direction":"zigzag""#), "unknown direction `zigzag`"),
+            (profile_op("outer", r#","compensation":"left""#), "unknown compensation `left`"),
+            (
+                profile_op("outer", r#","compensation":"controller_left","stock_to_leave":{"wall":1}"#),
+                "controller compensation cannot be combined with stock_to_leave.wall",
+            ),
+            (
+                r#"{"name":"pocket","type":"pocket","layers":["L"],"tool_id":1,"depth":1,"step_down":1,"direction":"climb","feeds":{"cut":1}}"#
+                    .to_string(),
+                "direction is only valid on a profile or a rotary finish",
+            ),
+            (
+                r#"{"name":"pocket","type":"pocket","layers":["L"],"tool_id":1,"depth":1,"step_down":1,"compensation":"computed","feeds":{"cut":1}}"#
+                    .to_string(),
+                "operation `pocket`: compensation is only valid on a profile",
+            ),
+        ];
+        for (index, (op, needle)) in cases.iter().enumerate() {
+            let err = load(&write_job(&format!("dir-bad-{index}"), &envelope("p.dxf", tools, &format!("[{op}]")))).expect_err(needle);
+            assert!(invalid_detail(&err).contains(needle), "{needle}: {err}");
+        }
     }
 
     fn tool_axis_job(units: &str, shape: &str, kinematics: bool, axis: &str) -> String {

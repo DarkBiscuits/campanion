@@ -373,7 +373,7 @@ fn parse_direction(text: &str) -> Result<CutDirection, CliError> {
     }
 }
 
-fn parse_compensation(value: &Value) -> Result<(Compensation, CompensationMode), CliError> {
+pub(crate) fn parse_compensation(value: &Value) -> Result<(Compensation, CompensationMode), CliError> {
     match as_str(value, "compensation")? {
         "computed" => Ok((Compensation::Computed, CompensationMode::Computed)),
         "controller_left" => Ok((Compensation::Controller(ControllerSide::Left), CompensationMode::ControllerLeft)),
@@ -382,7 +382,7 @@ fn parse_compensation(value: &Value) -> Result<(Compensation, CompensationMode),
     }
 }
 
-fn parse_lead(value: Option<&Value>) -> Result<Lead, CliError> {
+pub(crate) fn parse_lead(value: Option<&Value>) -> Result<Lead, CliError> {
     let Some(value) = value else {
         return Ok(Lead::None);
     };

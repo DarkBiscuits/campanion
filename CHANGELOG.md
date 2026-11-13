@@ -4,6 +4,35 @@
 
 ### Added
 
+- A built-in `mach4` three-axis mill/router post writes metric output with incremental IJK (`G91.1`) and `M9`/`M30` at the end. The opt-in `dwell.decimal_seconds` setting makes read-back treat an integer `G4 P` as milliseconds and a decimal `G4 P` as seconds, matching Mach4, and the writer always emits a decimal P so Mach4 reads seconds. Existing posts keep their dwell behavior and golden output. This output has not been proven on a machine.
+
+## 0.12.0 — 2026-11-12
+
+Plasma improvements: optional G41/G42 from IR controller compensation, job-file lead-ins and lead-outs with the small-hole rule, automatic contour side and climb or conventional direction, and a narrower-than-kerf refusal plus a warning when a rapid crosses a freed slug (#163–#166). This output has not been proven on a machine.
+
+### Added
+
+- Posts may set `cutter_comp` (`left`, `right`, `off`). A path whose IR compensation is `controller_left` or `controller_right` writes those words before the first feed and cancels at the end of the path. `plasma`, `linuxcnc`, `linuxcnc_router` and `mach3` write `G41`/`G42`/`G40`; `fanuc` and `haas` write `G41 D{tool}`/`G42 D{tool}`/`G40`. Posts that omit the block, including `grbl`, still refuse controller compensation. Computed programs are unchanged. Read-back and mill audit accept `G41`/`G42`, and audit requires cancellation before the program ends. This output has not been proven on a machine.
+- `campanion-job/1` profile operations may set `lead_in` and `lead_out` (`none`, `line`, `perpendicular`, or `arc`). A kerf tool that omits them gets an arc of one kerf width. On a closed inside path, leads that would leave the waste are shrunk to the largest size not below a quarter of the kerf, or omitted. Leads are refused with a ramp or helix entry. Diameter tools still default to no leads, so existing mill programs are unchanged. This output has not been proven on a machine.
+- Profile operations may set `direction` (`climb`, `conventional`, or `auto`; omitted is climb, and `auto` uses climb once the side is known) and `side: auto`, which treats a closed contour as inside when an odd number of other selected closed contours contain it. They may also set `compensation` (`computed`, `controller_left`, or `controller_right`). Controller compensation does not offset the path; posts with `cutter_comp` write G41/G42. Existing mill programs that omit these keys are unchanged. This output has not been proven on a machine.
+- An inside kerf profile that cannot be offset is refused as a slot narrower than the kerf. A later rapid whose XY path crosses a fully cut inner profile with no tabs writes a warning to stderr. This output has not been proven on a machine.
+
+## 0.11.0 — 2026-11-12
+
+Laser raster: optional per-move power in the IR, posts with `power_scale` write each feed's `S` including `S0` on overscan, and `laser_raster` jobs engrave a PGM through the planner (#159–#161). This output has not been proven on a machine.
+
+### Added
+
+- Feed moves in the IR may carry an optional `power` (the same quantity as process-on power). Omitted, the field is absent and old IR loads unchanged. Laser raster uses one value per scan segment.
+- Posts with `power_scale`, including `grbl_laser`, write each feed's `S` from that per-move power, including `S0` on a zero-power overscan. A program that uses per-move power refuses a feed that omits it, and a process-on without power writes `S0` instead of filling full scale. Vector programs without per-move power are unchanged, including the missing-power `S1000` comment. Read-back and `compare` check the `S` word against the IR. This output has not been proven on a machine.
+- `laser_raster` operations engrave a PGM beside the job. Scan lines zigzag across the placed image at the stated step, with overscan at power 0 and an optional scanning offset applied along each pass so opposite passes agree on the image. Grey is mapped to power by a linear, gamma, or table map; a grey the map sends to zero is power 0. Images larger than 8192 pixels on a side, or more than 4,000,000 pixels, are refused. This output has not been proven on a machine.
+
+## 0.10.1 — 2026-11-12
+
+Post and IR follow-ups contributed by DarkBiscuits: G91.1 incremental arc centres in read-back and mill/five-axis audit, G53 machine retracts in mill audit, tool shapes preserved in IR for per-move mesh verification, and inch output for three-axis mill posts. This output has not been proven on a machine.
+
+### Added
+
 - Optional flat, ball, bull and V-bit cutter geometry in IR tools. Run jobs preserve their shapes and resolve chamfer geometry per tool ID, rejecting conflicting definitions before output (#146).
 - `verify --mesh` uses each cutting move's tool geometry when `--tool` is omitted, including tool changes within a path. Missing shapes and unsupported V-bit verification fail explicitly; `--tool` remains a global override (#146).
 - Three-axis mill and router posts may set `"units": "inch"`. The IR and physical tolerances stay in millimetres. The writer emits `G20` and converts linear words (`X` `Y` `Z`, `I` `J` `K`, `R`) and units-per-minute feeds; read-back and mill audit convert them back to millimetres. Template literals are not converted. Rotary, five-axis, and lathe inch configurations are refused. Built-in posts stay metric. This output has not been proven on a machine (#88).

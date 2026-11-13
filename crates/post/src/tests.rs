@@ -140,6 +140,7 @@ fn builtins_load_and_match_ids() {
             "linuxcnc_5ax_tcp",
             "grbl",
             "mach3",
+            "mach4",
             "fanuc",
             "haas",
             "haas_umc",
@@ -250,8 +251,8 @@ fn validation_names_the_field() {
 fn linuxcnc_preamble_and_modal_lines() {
     let blocks = vec![
         ClBlock::Motion(ClMotion::Rapid { to: pose(0.0, 0.0, 5.0), feed: None }),
-        ClBlock::Motion(ClMotion::Linear { to: pose(10.0, 0.0, 5.0), feed: 250.0, role: MoveRole::Cut }),
-        ClBlock::Motion(ClMotion::Linear { to: pose(12.0, 0.0, 5.0), feed: 250.0, role: MoveRole::Cut }),
+        ClBlock::Motion(ClMotion::Linear { to: pose(10.0, 0.0, 5.0), feed: 250.0, role: MoveRole::Cut, power: None }),
+        ClBlock::Motion(ClMotion::Linear { to: pose(12.0, 0.0, 5.0), feed: 250.0, role: MoveRole::Cut, power: None }),
         ClBlock::Event(Event::Dwell { seconds: 0.5 }),
         ClBlock::Event(Event::ProcessOn { process: ProcessKind::Spindle, params: ProcessParams::new() }),
         ClBlock::Event(Event::ProcessOff { process: ProcessKind::Spindle }),
@@ -324,6 +325,7 @@ fn arc_centre_words_stay_in_plane() {
             sense: ArcSense::Ccw,
             feed: 80.0,
             role: MoveRole::Cut,
+            power: None,
         }),
         ClBlock::Motion(ClMotion::Helix {
             to: pose(0.0, 10.0, -2.0),
@@ -333,6 +335,7 @@ fn arc_centre_words_stay_in_plane() {
             sweep: std::f64::consts::TAU,
             feed: 40.0,
             role: MoveRole::Cut,
+            power: None,
         }),
     ];
     let text = post_program(&program(blocks), &linux(), &options()).expect("post");
@@ -355,6 +358,7 @@ fn arc_centre_words_stay_in_plane() {
             sense: ArcSense::Ccw,
             feed: 30.0,
             role: MoveRole::Cut,
+            power: None,
         }),
     ];
     let zx_program = program(zx_blocks);
@@ -375,6 +379,7 @@ fn arc_centre_words_stay_in_plane() {
             sense: ArcSense::Ccw,
             feed: 20.0,
             role: MoveRole::Cut,
+            power: None,
         }),
     ];
     let yz_program = program(yz_blocks);
@@ -449,6 +454,7 @@ fn fanuc_splits_full_circles_and_linearises_helices() {
             sense: ArcSense::Ccw,
             feed: 100.0,
             role: MoveRole::Cut,
+            power: None,
         }),
         ClBlock::Motion(ClMotion::Helix {
             to: pose(10.0, 0.0, -1.0),
@@ -458,6 +464,7 @@ fn fanuc_splits_full_circles_and_linearises_helices() {
             sweep: std::f64::consts::TAU,
             feed: 80.0,
             role: MoveRole::Cut,
+            power: None,
         }),
     ];
     let posted = Program::try_new(
@@ -510,6 +517,7 @@ fn haas_keeps_ijk_helices_and_five_digit_program_number() {
             sense: ArcSense::Cw,
             feed: 50.0,
             role: MoveRole::Cut,
+            power: None,
         }),
         ClBlock::Motion(ClMotion::Helix {
             to: pose(10.0, 0.0, -1.0),
@@ -519,6 +527,7 @@ fn haas_keeps_ijk_helices_and_five_digit_program_number() {
             sweep: std::f64::consts::TAU,
             feed: 40.0,
             role: MoveRole::Cut,
+            power: None,
         }),
     ];
     let posted = program(blocks);
@@ -547,7 +556,7 @@ fn fanuc_and_haas_keep_a_decimal_point_on_dimensional_words() {
     let blocks = vec![
         ClBlock::Motion(ClMotion::Rapid { to: pose(52.0, 0.0, 5.0), feed: None }),
         ClBlock::Event(Event::Dwell { seconds: 0.5 }),
-        ClBlock::Motion(ClMotion::Linear { to: pose(52.0, 0.0, 0.0), feed: 100.0, role: MoveRole::Cut }),
+        ClBlock::Motion(ClMotion::Linear { to: pose(52.0, 0.0, 0.0), feed: 100.0, role: MoveRole::Cut, power: None }),
         ClBlock::Motion(ClMotion::Arc {
             to: pose(47.0, 5.0, 0.0),
             plane: Plane::Xy,
@@ -555,6 +564,7 @@ fn fanuc_and_haas_keep_a_decimal_point_on_dimensional_words() {
             sense: ArcSense::Cw,
             feed: 100.0,
             role: MoveRole::Cut,
+            power: None,
         }),
     ];
     let posted = program(blocks);
@@ -627,6 +637,7 @@ fn ijk_arc_helix_and_full_circle_round_trip() {
             sense: ArcSense::Ccw,
             feed: 80.0,
             role: MoveRole::Cut,
+            power: None,
         }),
         ClBlock::Motion(ClMotion::Arc {
             to: pose(0.0, 10.0, 0.0),
@@ -635,6 +646,7 @@ fn ijk_arc_helix_and_full_circle_round_trip() {
             sense: ArcSense::Cw,
             feed: 80.0,
             role: MoveRole::Cut,
+            power: None,
         }),
         ClBlock::Motion(ClMotion::Helix {
             to: pose(0.0, 10.0, -2.0),
@@ -644,6 +656,7 @@ fn ijk_arc_helix_and_full_circle_round_trip() {
             sweep: std::f64::consts::TAU * 2.0,
             feed: 40.0,
             role: MoveRole::Cut,
+            power: None,
         }),
     ];
     round_trip(include_str!("../posts/linuxcnc.json"), blocks, 1e-3);
@@ -660,6 +673,7 @@ fn zx_arc_and_r_mode_and_lines_round_trip() {
             sense: ArcSense::Ccw,
             feed: 30.0,
             role: MoveRole::Cut,
+            power: None,
         }),
     ];
     round_trip(include_str!("../posts/grbl.json"), blocks, 1e-3);
@@ -676,6 +690,7 @@ fn zx_arc_and_r_mode_and_lines_round_trip() {
             sense: ArcSense::Ccw,
             feed: 20.0,
             role: MoveRole::Cut,
+            power: None,
         }),
     ];
     round_trip(&raw.to_string(), r_blocks, 1e-3);
@@ -691,6 +706,7 @@ fn zx_arc_and_r_mode_and_lines_round_trip() {
             sense: ArcSense::Ccw,
             feed: 20.0,
             role: MoveRole::Cut,
+            power: None,
         }),
         ClBlock::Motion(ClMotion::Helix {
             to: pose(-10.0, 0.0, -1.0),
@@ -700,17 +716,22 @@ fn zx_arc_and_r_mode_and_lines_round_trip() {
             sweep: std::f64::consts::TAU,
             feed: 15.0,
             role: MoveRole::Cut,
+            power: None,
         }),
     ];
     round_trip(&raw.to_string(), line_blocks, 1e-3);
 }
 
 #[test]
-fn channel_programs_and_controller_compensation_are_rejected() {
+fn channel_programs_are_rejected() {
     let program: Program =
         serde_json::from_str(r#"{"tools":[],"toolpaths":[],"channel_programs":[{"channel":0,"blocks":[]}],"syncs":[]}"#).expect("json");
     let err = post_program(&program, &linux(), &options()).expect_err("channel");
     assert!(err.to_string().contains("not supported"), "{err}");
+}
+
+#[test]
+fn controller_compensation_is_rejected_without_cutter_comp() {
     let blocks = vec![ClBlock::Motion(ClMotion::Rapid { to: pose(0.0, 0.0, 0.0), feed: None })];
     let path = ClPath::try_new(
         None,
@@ -723,8 +744,8 @@ fn channel_programs_and_controller_compensation_are_rejected() {
     )
     .expect("path");
     let program = Program::try_new(None, Vec::new(), None, vec![path], Vec::new(), Vec::new(), None).expect("program");
-    let err = post_program(&program, &linux(), &options()).expect_err("comp");
-    assert!(err.to_string().contains("not supported"), "{err}");
+    let err = post_program(&program, &builtin("grbl").expect("grbl"), &options()).expect_err("comp");
+    assert!(err.to_string().contains("controller left compensation is not supported"), "{err}");
 }
 
 fn spindle_speed(speed: f64) -> ProcessParams {
@@ -737,10 +758,10 @@ fn held_spindle() -> Program {
         ClBlock::Motion(ClMotion::Rapid { to: pose(0.0, 0.0, 5.0), feed: None }),
         ClBlock::Event(Event::ProcessOn { process: ProcessKind::Spindle, params: spindle_speed(12_000.0) }),
         ClBlock::Event(Event::Dwell { seconds: 0.5 }),
-        ClBlock::Motion(ClMotion::Linear { to: pose(10.0, 0.0, 0.0), feed: 1000.0, role: MoveRole::Cut }),
+        ClBlock::Motion(ClMotion::Linear { to: pose(10.0, 0.0, 0.0), feed: 1000.0, role: MoveRole::Cut, power: None }),
         ClBlock::Motion(ClMotion::Rapid { to: pose(10.0, 0.0, 5.0), feed: None }),
         ClBlock::Motion(ClMotion::Rapid { to: pose(30.0, 0.0, 5.0), feed: None }),
-        ClBlock::Motion(ClMotion::Linear { to: pose(40.0, 0.0, 0.0), feed: 1000.0, role: MoveRole::Cut }),
+        ClBlock::Motion(ClMotion::Linear { to: pose(40.0, 0.0, 0.0), feed: 1000.0, role: MoveRole::Cut, power: None }),
         ClBlock::Motion(ClMotion::Rapid { to: pose(40.0, 0.0, 5.0), feed: None }),
         ClBlock::Event(Event::ProcessOff { process: ProcessKind::Spindle }),
         ClBlock::Event(Event::Dwell { seconds: 0.25 }),
@@ -872,8 +893,8 @@ fn torch_cut(power: Option<f64>) -> Program {
         ClBlock::Motion(ClMotion::Rapid { to: pose(10.0, 10.0, 3.0), feed: None }),
         ClBlock::Event(Event::ProcessOn { process: ProcessKind::Torch, params: torch_params(power) }),
         ClBlock::Event(Event::Dwell { seconds: 0.5 }),
-        ClBlock::Motion(ClMotion::Linear { to: pose(10.0, 10.0, 1.2), feed: 300.0, role: MoveRole::Plunge }),
-        ClBlock::Motion(ClMotion::Linear { to: pose(40.0, 10.0, 1.2), feed: 1200.0, role: MoveRole::Cut }),
+        ClBlock::Motion(ClMotion::Linear { to: pose(10.0, 10.0, 1.2), feed: 300.0, role: MoveRole::Plunge, power: None }),
+        ClBlock::Motion(ClMotion::Linear { to: pose(40.0, 10.0, 1.2), feed: 1200.0, role: MoveRole::Cut, power: None }),
         ClBlock::Motion(ClMotion::Arc {
             to: pose(50.0, 20.0, 1.2),
             plane: Plane::Xy,
@@ -881,6 +902,7 @@ fn torch_cut(power: Option<f64>) -> Program {
             sense: ArcSense::Ccw,
             feed: 1200.0,
             role: MoveRole::Cut,
+            power: None,
         }),
         ClBlock::Event(Event::ProcessOff { process: ProcessKind::Torch }),
         ClBlock::Event(Event::Dwell { seconds: 0.25 }),
@@ -978,6 +1000,7 @@ fn plasma_fires_the_torch_and_linearises_helices() {
             sweep: std::f64::consts::TAU,
             feed: 80.0,
             role: MoveRole::Cut,
+            power: None,
         }),
     ]);
     let helix_text = post_program(&helix, &post, &options()).expect("helix");
@@ -1020,7 +1043,7 @@ fn grbl_laser_drops_z_and_scales_power() {
     let off = program(vec![
         ClBlock::Motion(ClMotion::Rapid { to: pose(1.0, 2.0, 3.0), feed: None }),
         ClBlock::Event(Event::ProcessOn { process: ProcessKind::Laser, params: zero }),
-        ClBlock::Motion(ClMotion::Linear { to: pose(4.0, 2.0, 0.0), feed: 100.0, role: MoveRole::Cut }),
+        ClBlock::Motion(ClMotion::Linear { to: pose(4.0, 2.0, 0.0), feed: 100.0, role: MoveRole::Cut, power: None }),
         ClBlock::Event(Event::ProcessOff { process: ProcessKind::Laser }),
     ]);
     let zero_text = post_program(&off, &post, &options()).expect("zero");
@@ -1050,6 +1073,7 @@ fn grbl_laser_rejects_an_arc_that_needs_z() {
             sense: ArcSense::Ccw,
             feed: 100.0,
             role: MoveRole::Cut,
+            power: None,
         }),
     ]);
     let err = post_program(&zx, &post, &options()).expect_err("zx");
@@ -1063,6 +1087,7 @@ fn grbl_laser_rejects_an_arc_that_needs_z() {
             sense: ArcSense::Ccw,
             feed: 100.0,
             role: MoveRole::Cut,
+            power: None,
         }),
     ]);
     let text = post_program(&xy, &post, &options()).expect("xy");
@@ -1087,7 +1112,7 @@ fn thc_lines_follow_the_pierce_dwell() {
     let bare = program(vec![
         ClBlock::Motion(ClMotion::Rapid { to: pose(0.0, 0.0, 1.0), feed: None }),
         ClBlock::Event(Event::ProcessOn { process: ProcessKind::Torch, params: ProcessParams::new() }),
-        ClBlock::Motion(ClMotion::Linear { to: pose(5.0, 0.0, 1.0), feed: 100.0, role: MoveRole::Cut }),
+        ClBlock::Motion(ClMotion::Linear { to: pose(5.0, 0.0, 1.0), feed: 100.0, role: MoveRole::Cut, power: None }),
         ClBlock::Event(Event::ProcessOff { process: ProcessKind::Torch }),
     ]);
     let bare_text = post_program(&bare, &post, &options()).expect("bare");
@@ -1097,7 +1122,7 @@ fn thc_lines_follow_the_pierce_dwell() {
         ClBlock::Motion(ClMotion::Rapid { to: pose(0.0, 0.0, 1.0), feed: None }),
         ClBlock::Event(Event::Dwell { seconds: 0.2 }),
         ClBlock::Event(Event::ProcessOn { process: ProcessKind::Torch, params: ProcessParams::new() }),
-        ClBlock::Motion(ClMotion::Linear { to: pose(5.0, 0.0, 1.0), feed: 100.0, role: MoveRole::Cut }),
+        ClBlock::Motion(ClMotion::Linear { to: pose(5.0, 0.0, 1.0), feed: 100.0, role: MoveRole::Cut, power: None }),
         ClBlock::Event(Event::ProcessOff { process: ProcessKind::Torch }),
     ]);
     let dwell_first_text = post_program(&dwell_first, &post, &options()).expect("dwell first");
@@ -1107,7 +1132,7 @@ fn thc_lines_follow_the_pierce_dwell() {
         ClBlock::Motion(ClMotion::Rapid { to: pose(0.0, 0.0, 2.0), feed: None }),
         ClBlock::Event(Event::ProcessOn { process: ProcessKind::Torch, params: torch_params(Some(1.0)) }),
         ClBlock::Event(Event::Dwell { seconds: 0.5 }),
-        ClBlock::Motion(ClMotion::Linear { to: pose(3.0, 0.0, 2.0), feed: 100.0, role: MoveRole::Cut }),
+        ClBlock::Motion(ClMotion::Linear { to: pose(3.0, 0.0, 2.0), feed: 100.0, role: MoveRole::Cut, power: None }),
     ]);
     let open_text = post_program(&open, &post, &options()).expect("open");
     let on = open_text.lines().position(|line| line.contains("THC ON")).expect("thc on");
@@ -1163,9 +1188,9 @@ fn hold_skips_a_repeated_spindle_on_and_per_cut_writes_it() {
     let params = spindle_speed(12_000.0);
     let blocks = vec![
         ClBlock::Event(Event::ProcessOn { process: ProcessKind::Spindle, params: params.clone() }),
-        ClBlock::Motion(ClMotion::Linear { to: pose(1.0, 0.0, 0.0), feed: 100.0, role: MoveRole::Cut }),
+        ClBlock::Motion(ClMotion::Linear { to: pose(1.0, 0.0, 0.0), feed: 100.0, role: MoveRole::Cut, power: None }),
         ClBlock::Event(Event::ProcessOn { process: ProcessKind::Spindle, params }),
-        ClBlock::Motion(ClMotion::Linear { to: pose(2.0, 0.0, 0.0), feed: 100.0, role: MoveRole::Cut }),
+        ClBlock::Motion(ClMotion::Linear { to: pose(2.0, 0.0, 0.0), feed: 100.0, role: MoveRole::Cut, power: None }),
         ClBlock::Event(Event::ProcessOff { process: ProcessKind::Spindle }),
     ];
     let program = program(blocks);
@@ -1185,8 +1210,8 @@ fn rapid_z_false_drops_only_z_rapids() {
     let blocks = vec![
         ClBlock::Motion(ClMotion::Rapid { to: pose(0.0, 0.0, 5.0), feed: None }),
         ClBlock::Motion(ClMotion::Rapid { to: pose(0.0, 0.0, 1.0), feed: None }),
-        ClBlock::Motion(ClMotion::Linear { to: pose(10.0, 0.0, 1.0), feed: 200.0, role: MoveRole::Cut }),
-        ClBlock::Motion(ClMotion::Linear { to: pose(10.0, 0.0, 0.0), feed: 50.0, role: MoveRole::Plunge }),
+        ClBlock::Motion(ClMotion::Linear { to: pose(10.0, 0.0, 1.0), feed: 200.0, role: MoveRole::Cut, power: None }),
+        ClBlock::Motion(ClMotion::Linear { to: pose(10.0, 0.0, 0.0), feed: 50.0, role: MoveRole::Plunge, power: None }),
     ];
     let posted = program(blocks);
     let text = post_program(&posted, &post, &options()).expect("post");
@@ -1203,8 +1228,8 @@ fn angled_travel() -> Program {
     let setup = a_setup();
     let blocks = vec![
         ClBlock::Motion(ClMotion::Rapid { to: turned(setup, 0.0, 0.0, 5.0, 0.0), feed: None }),
-        ClBlock::Motion(ClMotion::Linear { to: turned(setup, 50.0, 0.0, 5.0, 90.0), feed: 100.0, role: MoveRole::Cut }),
-        ClBlock::Motion(ClMotion::Linear { to: turned(setup, 60.0, 0.0, 5.0, 90.0), feed: 100.0, role: MoveRole::Cut }),
+        ClBlock::Motion(ClMotion::Linear { to: turned(setup, 50.0, 0.0, 5.0, 90.0), feed: 100.0, role: MoveRole::Cut, power: None }),
+        ClBlock::Motion(ClMotion::Linear { to: turned(setup, 60.0, 0.0, 5.0, 90.0), feed: 100.0, role: MoveRole::Cut, power: None }),
     ];
     with_rotary(setup, blocks)
 }
@@ -1272,7 +1297,7 @@ fn inverse_time_needs_part_frame_travel() {
     let setup = a_setup();
     let blocks = vec![
         ClBlock::Motion(ClMotion::Rapid { to: turned(setup, 1.0, 2.0, 3.0, 0.0), feed: None }),
-        ClBlock::Motion(ClMotion::Linear { to: turned(setup, 1.0, 2.0, 3.0, 15.0), feed: 100.0, role: MoveRole::Cut }),
+        ClBlock::Motion(ClMotion::Linear { to: turned(setup, 1.0, 2.0, 3.0, 15.0), feed: 100.0, role: MoveRole::Cut, power: None }),
     ];
     let err = post_program(&with_rotary(setup, blocks), &linux(), &options()).expect_err("zero length");
     assert!(err.to_string().contains("positive distance"), "{err}");
@@ -1283,9 +1308,9 @@ fn rapids_keep_inverse_time_until_the_next_plain_feed() {
     let setup = a_setup();
     let blocks = vec![
         ClBlock::Motion(ClMotion::Rapid { to: turned(setup, 0.0, 0.0, 5.0, 0.0), feed: None }),
-        ClBlock::Motion(ClMotion::Linear { to: turned(setup, 10.0, 0.0, 5.0, 10.0), feed: 100.0, role: MoveRole::Cut }),
+        ClBlock::Motion(ClMotion::Linear { to: turned(setup, 10.0, 0.0, 5.0, 10.0), feed: 100.0, role: MoveRole::Cut, power: None }),
         ClBlock::Motion(ClMotion::Rapid { to: turned(setup, 10.0, 0.0, 5.0, 20.0), feed: None }),
-        ClBlock::Motion(ClMotion::Linear { to: turned(setup, 20.0, 0.0, 5.0, 20.0), feed: 100.0, role: MoveRole::Cut }),
+        ClBlock::Motion(ClMotion::Linear { to: turned(setup, 20.0, 0.0, 5.0, 20.0), feed: 100.0, role: MoveRole::Cut, power: None }),
     ];
     let program = with_rotary(setup, blocks);
     let text = post_program(&program, &linux(), &options()).expect("post");
@@ -1313,6 +1338,7 @@ fn equal_angles_stay_arcs_and_a_changing_angle_is_linearised() {
                 sense: ArcSense::Ccw,
                 feed: 80.0,
                 role: MoveRole::Cut,
+                power: None,
             }),
         ],
     );
@@ -1335,6 +1361,7 @@ fn equal_angles_stay_arcs_and_a_changing_angle_is_linearised() {
                 sense: ArcSense::Ccw,
                 feed: 80.0,
                 role: MoveRole::Cut,
+                power: None,
             }),
         ],
     );
@@ -1360,6 +1387,7 @@ fn equal_angles_stay_arcs_and_a_changing_angle_is_linearised() {
                 sense: ArcSense::Ccw,
                 feed: 40.0,
                 role: MoveRole::Cut,
+                power: None,
             }),
         ],
     );
@@ -1381,7 +1409,7 @@ fn b_axis_uses_the_b_word_and_reads_back() {
         setup,
         vec![
             ClBlock::Motion(ClMotion::Rapid { to: turned(setup, 0.0, 0.0, 5.0, 0.0), feed: None }),
-            ClBlock::Motion(ClMotion::Linear { to: end_pose, feed: 100.0, role: MoveRole::Cut }),
+            ClBlock::Motion(ClMotion::Linear { to: end_pose, feed: 100.0, role: MoveRole::Cut, power: None }),
         ],
     );
     let text = post_program(&program, &post, &options()).expect("post");
@@ -1573,11 +1601,11 @@ fn haas_thread_run_writes_g99_before_g32_and_g98_before_the_next_g1() {
     let program = lathe_program(vec![named_lathe_path(
         "pass",
         vec![
-            ClBlock::Motion(ClMotion::Linear { to: xz_pose(11.0, 1.0), feed: 100.0, role: MoveRole::Cut }),
+            ClBlock::Motion(ClMotion::Linear { to: xz_pose(11.0, 1.0), feed: 100.0, role: MoveRole::Cut, power: None }),
             thread_block(9.0, -12.0, 2.5),
             ClBlock::Motion(ClMotion::Rapid { to: xz_pose(11.0, -12.0), feed: None }),
             thread_block(9.0, -20.0, 2.5),
-            ClBlock::Motion(ClMotion::Linear { to: xz_pose(8.0, -21.0), feed: 80.0, role: MoveRole::Cut }),
+            ClBlock::Motion(ClMotion::Linear { to: xz_pose(8.0, -21.0), feed: 80.0, role: MoveRole::Cut, power: None }),
         ],
     )]);
     let post = haas_lathe();
@@ -1606,7 +1634,10 @@ fn haas_thread_feed_is_restored_before_the_next_toolpath() {
         }
         let program = lathe_program(vec![
             named_lathe_path("pass", blocks),
-            named_lathe_path("next", vec![ClBlock::Motion(ClMotion::Linear { to: xz_pose(8.0, -13.0), feed: 80.0, role: MoveRole::Cut })]),
+            named_lathe_path(
+                "next",
+                vec![ClBlock::Motion(ClMotion::Linear { to: xz_pose(8.0, -13.0), feed: 80.0, role: MoveRole::Cut, power: None })],
+            ),
         ]);
         let text = post_program(&program, &post, &options()).expect("post");
         let lines: Vec<&str> = text.lines().collect();
@@ -1641,10 +1672,10 @@ fn reader_rejects_a_feed_move_in_haas_thread_feed_mode() {
 fn a_positive_feed_that_rounds_to_zero_is_rejected() {
     let blocks = vec![
         ClBlock::Motion(ClMotion::Rapid { to: pose(0.0, 0.0, 1.0), feed: None }),
-        ClBlock::Motion(ClMotion::Linear { to: pose(1.0, 0.0, 1.0), feed: 0.00004, role: MoveRole::Cut }),
+        ClBlock::Motion(ClMotion::Linear { to: pose(1.0, 0.0, 1.0), feed: 0.00004, role: MoveRole::Cut, power: None }),
     ];
     let program = program(blocks);
-    for id in ["linuxcnc", "linuxcnc_router", "grbl", "mach3", "fanuc", "haas", "plasma", "grbl_laser"] {
+    for id in ["linuxcnc", "linuxcnc_router", "grbl", "mach3", "mach4", "fanuc", "haas", "plasma", "grbl_laser"] {
         let post = builtin(id).expect(id);
         let err = post_program(&program, &post, &options()).expect_err(id);
         assert!(err.to_string().contains("feed rounds to zero"), "{id}: {err}");
@@ -1667,7 +1698,7 @@ fn probe_cut() -> Program {
         ClBlock::Event(Event::Probe { toward: Some(toward), feed: Some(80.0) }),
         ClBlock::Motion(ClMotion::Rapid { to: pose(0.0, 0.0, 5.0), feed: None }),
         ClBlock::Event(Event::ProcessOn { process: ProcessKind::Spindle, params: spindle }),
-        ClBlock::Motion(ClMotion::Linear { to: pose(10.0, 0.0, 5.0), feed: 80.0, role: MoveRole::Cut }),
+        ClBlock::Motion(ClMotion::Linear { to: pose(10.0, 0.0, 5.0), feed: 80.0, role: MoveRole::Cut, power: None }),
         ClBlock::Event(Event::ProcessOff { process: ProcessKind::Spindle }),
         ClBlock::Event(Event::ProcessOff { process: ProcessKind::Other("vacuum".into()) }),
     ])

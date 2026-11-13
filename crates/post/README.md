@@ -38,6 +38,18 @@ one returns an explicit error. Their metric output and verification are unchange
 
 `per_cut` writes every process-on. When any process is still on and the next motion is a rapid (`G0`), the writer emits `thc.off` and that process's off lines before the rapid, then the on lines again before the next feed. Speed and power come from the process-on that is still in effect. A pierce dwell is written only when the IR already has a dwell at that cut. Plasma and `grbl_laser` set `per_cut`, so a torch or beam stays off through G0 travel even when the IR process is `spindle`.
 
+## Laser power
+
+`grbl_laser` arms dynamic power with `M4 S0` and scales IR power 0..1 by `power_scale` 1000 onto `S0`..`S1000`. A process-on without power still posts at full scale (`S1000`) and notes that in a comment, which is the existing vector-cut behaviour.
+
+When any feed in the program carries per-move `power`, each of those feeds and arcs writes its own `S` word, including `S0` for a zero-power overscan. A missing power in that program is an error; it is never filled as `S1000`. A process-on without power then writes `M4 S0` and lets the moves set the level. Read-back records the `S` on that block, and `compare` checks it against the IR value. A post without `power_scale` refuses per-move power. This output has not been proven on a machine.
+
+## Cutter compensation
+
+A path whose IR compensation is `controller_left` or `controller_right` is the programmed contour, not a CAM-offset path. Posts that set `cutter_comp` write the `left` or `right` template before the first feed of that path and the `off` template at the end of the path. `{tool}` is the path's tool id. `linuxcnc`, `linuxcnc_router`, `mach3` and `plasma` write `G41` / `G42` / `G40`. `fanuc` and `haas` write `G41 D{tool}` / `G42 D{tool}` / `G40`.
+
+A post that omits `cutter_comp`, including `grbl` and `grbl_laser`, still refuses controller compensation. Computed or off compensation is unchanged: the path is already offset and the header's `G40` stays in effect. Read-back accepts `G41` and `G42`. Mill audit tracks them, accepts a `D` word only on a `G41` or `G42` block, and requires compensation to be cancelled by `G40` or by `M2`/`M30` at the end of the program. This output has not been proven on a machine.
+
 ## LinuxCNC router
 
 `linuxcnc_router` is the millimetre LinuxCNC dialect for a gantry. Motion matches `linuxcnc`: absolute millimetres, cancelled cutter compensation, IJK arcs and helices, and path blend `G64 P0.01`. There is no `rotary` block. A typical gantry is XYZ, so a program with an A or B angle is rejected. Use `linuxcnc` when the machine has a fourth axis.
@@ -48,9 +60,35 @@ A Probe event with a contact pose and a feed is one `G38.2` block: the three axi
 
 `audit` treats the probe block as a non-motion and accepts `M64`/`M65` only when `digital_out` is set and `P` is one of the declared pins. `G53` handling is unchanged. This output has not been proven on a machine.
 
+## Mach4
+
+`mach4` is a metric three-axis mill/router post, based on the public
+[Mach4 Mill Programming Guide v1.1, Build 3775](https://www.machsupport.com/wp-content/uploads/2014/05/Mill%20GCode%20Programming.pdf).
+Its header declares `G21 G90 G91.1 G94 G17 G40 G49 G80` on separate blocks: millimetres,
+absolute endpoints, incremental IJK centres, feed per minute, XY plane, and cancelled cutter
+compensation, tool-length offsets and canned cycles. It writes full circles and helices in
+XY/ZX/YZ, standard `T… M6`, `M3`/`M5`, `M7`/`M8`/`M9`, and ends with `M30`.
+There are no line numbers, machine parking coordinates, rotary/five-axis or lathe support,
+probing macros, automatic tool measurement or accessory mappings.
+
+The operator must establish the work offset and correct tool-tip Z for each tool with
+length compensation cancelled (`G49`). `T… M6` uses the machine's configured tool-change
+behavior; this post does not emit `G43 H…` or choose a tool-measurement macro. Review that
+setup before use. Software read-back and audit do not establish controller or machine acceptance.
+
+Mach4 distinguishes literal dwell spelling (manual p. 17): `G4 P2` means 0.002 seconds,
+while `G4 P2.0` means 2 seconds. Its dwell must be the only G code in the block.
+`dwell: { "word": "P", "unit": "s", "decimal_seconds": true }` opts into these rules for
+built-in or custom posts. The writer keeps a decimal point even with `trailing_zeros: false`
+or `decimals.dwell: 0`; `read_back` returns the actual seconds for integer and decimal P.
+The mill audit validates the literal-P block but does not report elapsed dwell time.
+X/U dwell variants and variable expressions are outside this literal-P scope.
+The option defaults to false, preserving existing `s` and `ms` posts. It requires `word: P`
+and `unit: s`. Dimensional `decimal_point` does not control dwell formatting.
+
 ## Modal audit
 
-`read_back`, `audit` and `audit_five` accept `G91.1` as an explicit declaration of incremental `I`/`J`/`K` arc centres, including in a custom post header or on a motion block. It does not change the `G90` positioning mode. `G90.1` is rejected with a specific diagnostic because absolute arc centres are not supported. Built-in post headers are unchanged.
+`read_back`, `audit` and `audit_five` accept `G91.1` as an explicit declaration of incremental `I`/`J`/`K` arc centres, including in a custom post header or on a motion block. It does not change the `G90` positioning mode. `G90.1` is rejected with a specific diagnostic because absolute arc centres are not supported. Existing built-in post headers are unchanged; `mach4` declares `G91.1` explicitly.
 
 `audit` accepts `G53` machine-coordinate moves, including retracts in custom tool-change templates. They are excluded from part-frame motions and preserve the part position, motion mode and plane, matching `read_back` and the existing five-axis audit. This replay does not establish a machine-to-work coordinate transform or verify the physical retract path.
 
