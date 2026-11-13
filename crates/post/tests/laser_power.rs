@@ -1,7 +1,7 @@
 #![allow(clippy::expect_used)]
 //! Per-move laser S words on `grbl_laser`.
 //!
-//! Vector programs that omit move power keep the existing process-on default (full scale).
+//! Vector programs that omit process power write S0 (beam off) and never full scale.
 //! A raster sets every feed, including S0 on overscan, and never fills a missing value as S1000.
 
 use campanion_ir::{
@@ -51,6 +51,22 @@ fn raster(powers: &[(f64, f64, Option<f64>)]) -> Program {
     program(blocks)
 }
 
+fn s_words_above_zero(text: &str) -> Vec<String> {
+    let mut values = Vec::new();
+    for line in text.lines() {
+        let body = line.split('(').next().unwrap_or(line);
+        for word in body.split_whitespace() {
+            if let Some(rest) = word.strip_prefix('S')
+                && let Ok(value) = rest.parse::<f64>()
+                && value > 0.0
+            {
+                values.push(word.to_string());
+            }
+        }
+    }
+    values
+}
+
 fn motion_s_words(text: &str) -> Vec<i64> {
     let mut values = Vec::new();
     for line in text.lines() {
@@ -86,11 +102,29 @@ fn roundtrip(p: &Program) -> String {
 }
 
 #[test]
-fn vector_program_without_move_power_still_fills_missing_process_power() {
+fn vector_program_without_process_power_writes_s0() {
     let p = raster(&[(10.0, 0.0, None)]);
+    let text = post_program(&p, &post(), &options()).expect("missing power defaults to S0");
+    assert!(text.contains("power was not set, using S0"), "{text}");
+    assert!(text.contains("M4 S0"), "{text}");
+    assert!(!text.contains("S1000"), "{text}");
+    assert!(s_words_above_zero(&text).is_empty(), "defaulted power must not write S above 0\n{text}");
+    audit(&text, &post()).expect("audit");
+}
+
+#[test]
+fn vector_program_with_explicit_process_power_writes_that_scale() {
+    let params = ProcessParams::new().power(Some(0.2)).expect("power");
+    let p = program(vec![
+        ClBlock::Motion(ClMotion::Rapid { to: pose(0.0, 0.0, 0.0), feed: None }),
+        ClBlock::Event(Event::ProcessOn { process: ProcessKind::Laser, params }),
+        feed(10.0, 0.0, 0.0, None),
+        ClBlock::Event(Event::ProcessOff { process: ProcessKind::Laser }),
+    ]);
     let text = roundtrip(&p);
-    assert!(text.contains("power missing, using S1000"), "{text}");
-    assert!(text.contains("M4 S1000"), "{text}");
+    assert!(text.contains("M4 S200"), "{text}");
+    assert!(!text.contains("power missing"), "{text}");
+    assert!(!text.contains("M4 S1000"), "{text}");
     assert!(motion_s_words(&text).is_empty(), "vector feeds must not grow an S word\n{text}");
 }
 
